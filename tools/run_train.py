@@ -14,7 +14,7 @@ if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
 from vn_tsd.config.resolve import resolve_config
-from vn_tsd.runtime.run_dir import make_run_dir
+from vn_tsd.runtime.run_dir import make_run_dir, with_run_hash
 from vn_tsd.utils.io import load_yaml
 from vn_tsd.utils.seed import set_seed
 
@@ -53,8 +53,9 @@ def main(argv=None) -> None:
         cli.setdefault("online_preprocess", {})["enabled"] = True
     if args.no_online:
         cli.setdefault("online_preprocess", {})["enabled"] = False
-    if args.run_name:
-        cli.setdefault("train", {})["run_name"] = args.run_name
+    run_name = with_run_hash(args.run_name) if args.run_name else None
+    if run_name:
+        cli.setdefault("train", {})["run_name"] = run_name
     overrides = _merge(overrides, cli)
 
     pipe_yaml = args.config or f"configs/pipelines/{args.pipeline}.yaml"
@@ -70,7 +71,7 @@ def main(argv=None) -> None:
         for sub in ("logs", "figures", "checkpoints"):
             (run_dir / sub).mkdir(parents=True, exist_ok=True)
     else:
-        run_dir = make_run_dir(cfg.get("outputs", {}).get("root", "outputs"), args.pipeline, args.run_name)
+        run_dir = make_run_dir(cfg.get("outputs", {}).get("root", "outputs"), args.pipeline, run_name)
 
     if args.pipeline == "faster_rcnn":
         from vn_tsd.pipelines.faster_rcnn.train import FasterRCNNPipeline as P

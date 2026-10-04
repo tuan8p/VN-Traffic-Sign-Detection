@@ -72,7 +72,7 @@ YOLO26m:
 torchrun --nproc_per_node=2 -m tools.run_train --pipeline yolo26m --runtime configs/runtime/kaggle.yaml --run-name yolo26m_s42_ep50_bs8
 ```
 
-Mặc định là Kaggle 2× T4 với torchrun --nproc_per_node=2. Local chỉ để thử pipeline có chạy được không, dùng python -m tools.run_train và configs/runtime/local.yaml, không cố định số GPU. Thêm --data-root nếu cache không nằm ở data/processed. Thêm --online khi đang tune preprocessing online, và thêm _online vào tên run.
+Mặc định là Kaggle 2× T4 với torchrun --nproc_per_node=2. Local chỉ để thử pipeline có chạy được không, dùng python -m tools.run_train và configs/runtime/local.yaml, không cố định số GPU. Thêm --data-root nếu cache không nằm ở data/processed. Thêm --online khi đang tune preprocessing online. Tên run thêm _online trước hash 8 ký tự ở đuôi.
 
 ## W&B
 
@@ -80,9 +80,9 @@ Team [HCMUT_IPCV](https://forge.coreweave.com/wandb/HCMUT_IPCV), project `BTL`, 
 
 Tên run hiện trên W&B, cả hai pipeline dùng một kiểu:
 
-`{pipeline}_s{seed}_ep{epochs}_bs{batch_size}`
+`{pipeline}_s{seed}_ep{epochs}_bs{batch_size}[_online]_{hash8}`
 
-Ví dụ `yolo26m_s42_ep50_bs8` và `faster_rcnn_s42_ep20_bs8`. Bật online preprocess thì thêm `_online` ở cuối. Seed lúc tìm config là 42. Bốn seed còn lại chỉ đổi số sau `s`, giữ nguyên phần còn lại.
+Ví dụ `yolo26m_s42_ep50_bs8_a1b2c3d4` và `faster_rcnn_s42_ep20_bs8_a1b2c3d4`. Bật online preprocess thì thêm `_online` ngay trước hash. Seed lúc tìm config là 42. Bốn seed còn lại chỉ đổi số sau `s`. Hash 8 ký tự ở đuôi do with_run_hash gắn, để hai lần chạy cùng config không trùng tên trên W&B.
 
 
 ## Nhánh
