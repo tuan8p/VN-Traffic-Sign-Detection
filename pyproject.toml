@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vn-tsd"
+version = "0.1.0"
+description = "Vietnamese traffic-sign detection — Faster R-CNN ResNet-50 and YOLO26m (IPCV)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "IPCV team" }]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "opencv-python-headless>=4.8",
+  "Pillow>=10.0",
+  "PyYAML>=6.0",
+  "tqdm>=4.66",
+  "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+detect = ["torch>=2.1", "torchvision>=0.16", "ultralytics>=8.3"]
+demo = ["streamlit>=1.28"]
+dev = ["pytest>=7.4"]
+all = ["vn-tsd[detect,demo,dev]"]
+
+[project.scripts]
+vn-tsd-preprocess = "tools.run_preprocess:main"
+vn-tsd-train = "tools.run_train:main"
+vn-tsd-eval = "tools.run_eval:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vn_tsd*", "tools*", "analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,30 @@
+# Owner: Team pipeline Faster R-CNN + preprocessing online.
+# Online ops below only run when enabled is true.
+# Do not set train.batch_size or eval.batch_size here. Both come from configs/shared.yaml.
+pipeline: faster_rcnn
+inherits: configs/shared.yaml
+
+model:
+  family: faster_rcnn
+  backbone: resnet50
+  pretrained: true
+  # Team Faster R-CNN: 52 is the dataset. Box predictor must be 53 (plus background).
+  # DataLoader must use per_rank_batch so the shared total is not applied on every GPU.
+  num_classes: 52
+
+train:
+  epochs: 20
+  lr: 0.005
+  momentum: 0.9
+  weight_decay: 0.0005
+  primary_metric: mAP50-95
+
+online_preprocess:
+  enabled: false
+  letterbox: true
+  normalize: true
+  hflip: false
+  color_jitter: false
+  mosaic: false
+  mixup: false
+  jitter: 0.1

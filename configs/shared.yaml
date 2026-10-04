@@ -1,0 +1,78 @@
+# Shared detection keys. Change only when both pipelines should move together.
+project:
+  name: VN-Traffic-Sign-Detection
+  course: IPCV
+  wandb_entity: HCMUT_IPCV
+  wandb_project: BTL
+  wandb_base_url: https://forge.coreweave.com
+  # Name shown on W&B for both pipelines.
+  # Append _online only when online_preprocess.enabled is true.
+  wandb_run_name: "{pipeline}_s{seed}_ep{epochs}_bs{batch_size}"
+
+seed: 42
+# Search uses 42. After the best config is locked, repeat the other four
+# and report mean and std. The list is the search seed plus those four.
+seeds: [42, 7, 21, 123, 2026]
+
+hardware:
+  # Both pipelines train on Kaggle 2x T4. Launch like the classification DL
+  # pipeline: torchrun --nproc_per_node=2 (DDP, nccl, AMP).
+  target: kaggle-2x-t4
+  gpus: 2
+
+data:
+  root: ${DATA_ROOT:}
+  images_dirname: images
+  labels_dirname: labels
+  class_table: configs/classes.csv
+  num_classes: 52
+  # Detection keeps YOLO boxes. Do not crop to a classification sample.
+
+preprocess:
+  image_size: [640, 640]
+  keep_aspect: true
+  pad_value: 114
+  min_box_px: 8
+  # Offline cache is the shared finetune set. Includes letterbox and
+  # augmentation that does not mirror sign classes.
+  hflip: false
+
+split:
+  use_provided_splits: true
+  ratios: { train: 0.7, val: 0.15, test: 0.15 }
+
+# One total for both pipelines. Size it to fill the 2 Kaggle T4s.
+# Do not give each pipeline its own train or eval batch.
+# Faster R-CNN must not put this total on every GPU.
+# YOLO passes this same total to Ultralytics.
+# Not a profiled maximum.
+train:
+  batch_size: 8
+  amp: true
+  require_wandb: true
+  # Same for both pipelines, like batch_size. Tell the other team before changing.
+  early_stopping_patience: 10
+
+eval:
+  batch_size: 16
+  auto_eval_test: true
+  split: test
+
+metrics:
+  # Best checkpoint is chosen from val after every epoch.
+  primary: mAP50-95
+  also: [mAP50, mAP75, AR100]
+
+outputs:
+  root: outputs
+  zip_after_train: true
+
+online_preprocess:
+  enabled: false
+  letterbox: false
+  normalize: false
+  hflip: false
+  color_jitter: false
+  mosaic: false
+  mixup: false
+  jitter: 0.0
