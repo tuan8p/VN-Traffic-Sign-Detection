@@ -6,8 +6,8 @@ project:
   wandb_project: BTL
   wandb_base_url: https://forge.coreweave.com
   # Name shown on W&B for both pipelines.
-  # Append _online only when online_preprocess.enabled is true.
-  wandb_run_name: "{pipeline}_s{seed}_ep{epochs}_bs{batch_size}"
+  # _online only when online preprocess is on, then an 8-char hex so reruns do not collide.
+  wandb_run_name: "{pipeline}_s{seed}_ep{epochs}_bs{batch_size}[_online]_{hash8}"
 
 seed: 42
 # Search uses 42. After the best config is locked, repeat the other four
