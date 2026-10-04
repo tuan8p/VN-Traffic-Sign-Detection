@@ -1,0 +1,7 @@
+runtime: kaggle
+device: cuda
+num_workers: 2
+pin_memory: true
+gpus: 2
+mixed_precision: true
+# torchrun --nproc_per_node=2, same DDP mode as the classification DL pipeline.

@@ -218,3 +218,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data / runs (VN-TSD)
+data/raw/**
+data/processed/**
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+outputs/**
+!outputs/.gitkeep
+analysis/figures/**
+!analysis/figures/.gitkeep
+wandb/
+runs/
+*.pt
+*.pth
+*.ckpt
+.env
+.env.*
+!.env.example
+.venv/
+venv/

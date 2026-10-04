@@ -1,0 +1,26 @@
+# Owner: Team pipeline YOLO26m + preprocessing online.
+# Online ops below only run when enabled is true.
+# Do not set train.batch_size or eval.batch_size here. Both come from configs/shared.yaml.
+# Team YOLO: pass the shared train and eval totals from configs/shared.yaml to Ultralytics. Do not divide them.
+pipeline: yolo26m
+inherits: configs/shared.yaml
+
+model:
+  family: yolo
+  weights: yolo26m.pt
+  imgsz: 640
+
+train:
+  epochs: 50
+  lr0: 0.01
+  primary_metric: mAP50-95
+
+online_preprocess:
+  enabled: false
+  letterbox: true
+  normalize: true
+  hflip: false
+  color_jitter: false
+  mosaic: true
+  mixup: false
+  jitter: 0.1
