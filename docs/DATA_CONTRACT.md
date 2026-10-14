@@ -6,27 +6,78 @@ Source is a YOLO detection set (images + labels), same family as VNTS (52 classe
 
 ```
 DATA_ROOT/
-  images/
-  labels/          # YOLO txt: class cx cy w h (normalized)
-  split_dataset/   # optional provided splits
+  images/          # file ảnh (.jpg, .png, ...)
+  labels/          # YOLO txt: class cx cy w h (normalized 0-1)
+  split_dataset/   # (tùy chọn) train.txt, val.txt, test.txt – mỗi dòng là tên ảnh
 ```
 
 ## Processed layout (offline)
 
-TODO [Team analysis + preprocessing offline]: hiện thực layout này trong vn_tsd/data/preprocess_offline.py.
+Chạy `python -m tools.run_preprocess --data-root <DATA_ROOT>` để sinh ra cây này:
 
 ```
 data/processed/
-  images/{train,val,test}/
-  labels/{train,val,test}/
-  data.yaml
-  meta.json
+  images/
+    train/
+    val/
+    test/
+  labels/
+    train/
+    val/
+    test/
+  data.yaml     # chuẩn Ultralytics: path, train, val, test, nc, names
+  meta.json     # thống kê: số ảnh/box mỗi split, box bị loại, config dùng
 ```
+
+### data.yaml format
+
+```yaml
+path: data/processed
+train: images/train
+val: images/val
+test: images/test
+nc: 52
+names:
+  0: Đường người đi bộ cắt ngang
+  1: Đường giao nhau (ngã ba bên phải)
+  ...
+  51: Chú ý chướng ngại vật – vòng tránh sang bên phải
+```
+
+### meta.json format
+
+```json
+{
+  "config": {
+    "target_size": [640, 640],
+    "pad_value": 114,
+    "min_box_px": 8,
+    "num_classes": 52,
+    "seed": 42
+  },
+  "splits": {
+    "train": { "n_images": ..., "n_boxes_in": ..., "n_boxes_out": ..., "n_tiny_dropped": ... },
+    "val":   { ... },
+    "test":  { ... }
+  },
+  "total_dropped_tiny": ...,
+  "total_boxes_kept": ...,
+  "elapsed_seconds": ...
+}
+```
+
+## Preprocessing steps
+
+1. **Letterbox resize** – giữ tỉ lệ khung hình, resize vào 640×640, bù màu xám 114.
+2. **Cập nhật tọa độ box** – tính lại `cx cy w h` normalized theo ảnh mới.
+3. **Lọc tiny box** – bỏ box có `min(w,h) < 8px` sau letterbox.
+4. **Split** – ưu tiên dùng `split_dataset/` có sẵn; nếu không, tự chia 70/15/15 ngẫu nhiên (seed 42).
+5. **Ghi ảnh** – JPEG quality 95.
+6. **Ghi nhãn** – YOLO `.txt` cùng stem với ảnh.
 
 ## Rules
 
-- Horizontal flip stays off by default (mirror-pair sign classes).
-- Primary metric is mAP@0.50:0.95. Also report mAP@0.50, mAP@0.75, and AR@100. Same keys as configs/shared.yaml: mAP50-95, mAP50, mAP75, AR100.
-- Both pipelines read the same processed split. Online aug is a tuning switch, not part of the cached set.
-
-Offline preprocessing là bản finetune chung. Nó gồm letterbox và augmentation phù hợp (không hflip). Không lưu thành .npy crop. Cả hai pipeline đọc cùng cây này.
+- Horizontal flip **mặc định tắt** (`hflip: false` trong shared.yaml) — biển báo giao thông Việt Nam có các cặp đối xứng gương mang ý nghĩa trái ngược.
+- Primary metric: **mAP@0.50:0.95** (`mAP50-95`). Cũng báo `mAP50`, `mAP75`, `AR@100`.
+- Cả hai pipeline (Faster R-CNN và YOLO26m) đọc **cùng một cây** `data/processed/`. Online aug là switch tune riêng, không sửa cache này.
+- Không lưu crop ảnh phân loại (`.npy` hay thư mục per-class). Đây là bài toán **object detection**.
