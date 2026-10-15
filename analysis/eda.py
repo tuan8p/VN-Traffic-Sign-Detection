@@ -358,9 +358,10 @@ def plot_box_dimensions(
     image_size: int = 640,
     tag: str = "",
 ) -> None:
-    """Figure 03: phân bố kích thước box (w, h, aspect ratio, area)."""
+    """Figure 03: phân bố kích thước box (w, h, aspect ratio, area) theo chuẩn Letterbox 640x640."""
+    canvas_h = int(round(image_size * 9 / 16)) if tag == "raw" else image_size
     ws = np.array([b["w"] * image_size for b in boxes], dtype=float)
-    hs = np.array([b["h"] * image_size for b in boxes], dtype=float)
+    hs = np.array([b["h"] * canvas_h for b in boxes], dtype=float)
     areas = ws * hs
     aspects = ws / (hs + 1e-8)
 
@@ -507,9 +508,10 @@ def plot_tiny_box_candidates(
     image_size: int = 640,
     tag: str = "",
 ) -> None:
-    """Figure 06: histogram kích thước nhỏ; highlight box dưới min_box_px."""
+    """Figure 06: histogram kích thước nhỏ; highlight box dưới min_box_px theo Letterbox 640x640."""
+    canvas_h = int(round(image_size * 9 / 16)) if tag == "raw" else image_size
     ws = np.array([b["w"] * image_size for b in boxes], dtype=float)
-    hs = np.array([b["h"] * image_size for b in boxes], dtype=float)
+    hs = np.array([b["h"] * canvas_h for b in boxes], dtype=float)
     min_dim = np.minimum(ws, hs)
 
     tiny_mask = min_dim < min_box_px
@@ -644,7 +646,13 @@ def check_and_plot_data_leakage(
                 return None
             try:
                 with Image.open(p) as img:
-                    img_gray = img.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
+                    w, h = img.size
+                    # Căn chỉnh với canvas 640x640: nếu là ảnh letterbox, chỉ băm vùng nội dung thực tế (140->500)
+                    if w == 640 and h == 640:
+                        img_active = img.crop((0, 140, 640, 500))
+                    else:
+                        img_active = img
+                    img_gray = img_active.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
                     arr = np.array(img_gray, dtype=np.int16)
                     return (arr[:, 1:] > arr[:, :-1]).flatten()
             except Exception:
@@ -699,6 +707,10 @@ def check_and_plot_data_leakage(
             try:
                 img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
                 if img is not None:
+                    h, w = img.shape[:2]
+                    # Nếu là ảnh letterbox 640x640: cắt bỏ dải padding 140px
+                    if w == 640 and h == 640:
+                        img = img[140:500, :]
                     thumb = cv2.resize(img, (16, 16)).flatten() / 255.0
                     features.append(thumb)
                     valid_labels.append(lbl)

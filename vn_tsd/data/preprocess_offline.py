@@ -37,6 +37,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Public API
@@ -215,6 +216,9 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path) -> Path:
     meta["total_boxes_kept"] = total_kept
     meta["elapsed_seconds"] = round(elapsed, 2)
 
+    # ── Phân tích rò rỉ dữ liệu & xuất test_clean_files.txt ──
+    _analyze_leakage_and_save_clean_test(splits, stem_to_imgpath, out_root, meta)
+
     # ── Ghi data.yaml ──
     _write_data_yaml(out_root, classes)
     print(f"[preprocess] data.yaml ghi tại: {out_root / 'data.yaml'}")
@@ -227,6 +231,87 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path) -> Path:
     print(f"[preprocess] Hoàn thành trong {elapsed:.1f}s  →  {out_root}")
 
     return out_root
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Leakage Analysis Helper
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _analyze_leakage_and_save_clean_test(
+    splits: dict[str, list[str]],
+    stem_to_imgpath: dict[str, Path],
+    out_root: Path,
+    meta: dict[str, Any],
+) -> None:
+    """Phát hiện ảnh test rò rỉ (near-duplicate) bằng dHash và xuất test_clean_files.txt."""
+    train_stems = splits.get("train", [])
+    test_stems = splits.get("test", [])
+    if not train_stems or not test_stems:
+        return
+
+    def _calc_dhash(stem: str, split_name: str) -> np.ndarray | None:
+        p = out_root / "images" / split_name / (stem + ".jpg")
+        if not p.exists():
+            p = stem_to_imgpath.get(stem)
+        if not p or not p.exists():
+            return None
+        try:
+            with Image.open(p) as img:
+                w, h = img.size
+                if w == 640 and h == 640:
+                    img_active = img.crop((0, 140, 640, 500))
+                else:
+                    img_active = img
+                img_gray = img_active.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
+                arr = np.array(img_gray, dtype=np.int16)
+                return (arr[:, 1:] > arr[:, :-1]).flatten()
+        except Exception:
+            return None
+
+    tr_hashes = [_calc_dhash(s, "train") for s in train_stems]
+    te_hashes = [_calc_dhash(s, "test") for s in test_stems]
+
+    valid_tr_indices = [i for i, h in enumerate(tr_hashes) if h is not None]
+    valid_te_indices = [i for i, h in enumerate(te_hashes) if h is not None]
+
+    if not valid_tr_indices or not valid_te_indices:
+        return
+
+    tr_mat = np.array([tr_hashes[i] for i in valid_tr_indices], dtype=np.uint8)
+    te_mat = np.array([te_hashes[i] for i in valid_te_indices], dtype=np.uint8)
+
+    tr_packed = np.packbits(tr_mat, axis=1)
+    te_packed = np.packbits(te_mat, axis=1)
+    xor_mat = np.bitwise_xor(te_packed[:, None, :], tr_packed[None, :, :])
+    popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
+    hamm_dist = popcount[xor_mat].sum(axis=2)
+    min_dists = hamm_dist.min(axis=1)
+
+    clean_test_stems = []
+    leak_test_stems = []
+    for idx_te, d in zip(valid_te_indices, min_dists):
+        stem = test_stems[idx_te]
+        if d <= 5:
+            leak_test_stems.append(stem)
+        else:
+            clean_test_stems.append(stem)
+
+    clean_file = out_root / "test_clean_files.txt"
+    try:
+        with open(clean_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(clean_test_stems) + "\n")
+    except Exception as e:
+        print(f"  [Warn] Không thể ghi test_clean_files.txt: {e}")
+
+    meta["leakage_analysis"] = {
+        "total_test_evaluated": len(min_dists),
+        "near_duplicates_le_5": len(leak_test_stems),
+        "clean_test_count": len(clean_test_stems),
+        "near_duplicates_pct": round(len(leak_test_stems) / len(min_dists) * 100, 2),
+        "clean_test_file": "test_clean_files.txt",
+    }
+    print(f"[preprocess] Leakage Analysis: {len(clean_test_stems)}/{len(min_dists)} ảnh test độc lập (sạch rò rỉ).")
+    print(f"[preprocess]   Đã ghi danh sách test sạch: {clean_file}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
