@@ -365,6 +365,23 @@ def _write_data_yaml(out_root: Path, classes: dict[int, str]) -> None:
         yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
 
 
+def _find_split_file(split_dir: Path, sname: str) -> Path | None:
+    """Tìm file split phù hợp trong thư mục split_dataset/."""
+    candidates = [
+        split_dir / f"{sname}.txt",
+        split_dir / f"{sname}_files.txt",
+        split_dir / f"{sname}ing.txt",
+        split_dir / f"{sname}ing_files.txt",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    for f in split_dir.glob("*.txt"):
+        if sname.lower() in f.stem.lower():
+            return f
+    return None
+
+
 def _discover_splits(
     data_root: Path,
     img_paths: list[Path],
@@ -380,30 +397,32 @@ def _discover_splits(
         split_dir = data_root / "split_dataset"
         splits_found: dict[str, list[str]] = {}
         for sname in ("train", "val", "test"):
-            sf = split_dir / f"{sname}.txt"
-            if not sf.exists():
-                # Thử thêm Image/ prefix hay đuôi ảnh
-                sf_alt = split_dir / f"{sname}.txt"
-                if not sf_alt.exists():
-                    continue
+            sf = _find_split_file(split_dir, sname)
+            if not sf:
+                continue
             with open(sf, "r", encoding="utf-8") as fp:
                 lines = [l.strip() for l in fp if l.strip()]
-            # Mỗi dòng có thể là path đầy đủ hoặc stem
-            stems_in_split = []
-            for line in lines:
-                stem = Path(line).stem
-                # Bỏ prefix ảnh nếu có
-                stems_in_split.append(stem)
-            # Lọc chỉ giữ stem có cả ảnh
+            stems_in_split = [Path(line).stem for line in lines]
             valid = [s for s in stems_in_split if s in {p.stem for p in img_paths}]
             if valid:
                 splits_found[sname] = valid
 
-        if len(splits_found) >= 2:
+        if "train" in splits_found:
             print(f"[preprocess] Dùng split có sẵn từ {split_dir}")
-            # Đảm bảo có test split ngay cả khi file không có
-            if "test" not in splits_found and "val" in splits_found:
+            # Nếu thiếu val: trích xuất 15% từ train làm val để đủ 3 tập
+            if "val" not in splits_found:
+                tr = splits_found["train"]
+                n_val = max(1, round(len(tr) * ratios.get("val", 0.15)))
+                shuffled_tr = tr[:]
+                rng.shuffle(shuffled_tr)
+                splits_found["val"] = shuffled_tr[:n_val]
+                splits_found["train"] = shuffled_tr[n_val:]
+                print(f"[preprocess]   Tự động trích {n_val} ảnh từ train làm tập val để phục vụ validation.")
+
+            # Nếu thiếu test: trích xuất hoặc dùng val
+            if "test" not in splits_found:
                 splits_found["test"] = splits_found["val"]
+
             return splits_found
         print(f"[preprocess] Không tìm thấy split có sẵn trong {split_dir}, tự chia theo tỉ lệ.")
 
@@ -419,3 +438,4 @@ def _discover_splits(
         "val": shuffled[n_train : n_train + n_val],
         "test": shuffled[n_train + n_val :],
     }
+
