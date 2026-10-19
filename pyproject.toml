@@ -37,3 +37,35 @@ include = ["vn_tsd*", "tools*", "analysis*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tool.pixi.pypi-dependencies]
+vn-tsd = { path = ".", editable = true }
+
+# Keep every generated environment on a Python ABI supported by PyTorch.
+[tool.pixi.dependencies]
+python = "3.11.*"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+all = { features = ["all"], solve-group = "default" }
+demo = { features = ["demo"], solve-group = "default" }
+detect = { features = ["detect"], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+frcnn = { features = ["frcnn", "dev"], solve-group = "frcnn" }
+
+[tool.pixi.tasks]
+
+# Local development and smoke tests; full training runs on Kaggle.
+[tool.pixi.feature.frcnn.pypi-dependencies]
+torch = { version = ">=2.1,<3", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = ">=0.16,<1", index = "https://download.pytorch.org/whl/cu128" }
+wandb = ">=0.17,<1"
+pycocotools = ">=2.0.7,<3"
+ipykernel = ">=6,<8"
+
+[tool.pixi.feature.frcnn.tasks]
+test = "python -m pytest -q"
