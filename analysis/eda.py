@@ -24,6 +24,12 @@ Run:
 """
 from __future__ import annotations
 
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import argparse
 import csv
 import hashlib
@@ -33,6 +39,7 @@ import random
 from pathlib import Path
 from typing import Any
 from collections import Counter
+import shutil
 
 import matplotlib
 matplotlib.use("Agg")  # headless
@@ -737,7 +744,7 @@ def check_and_plot_data_leakage(
 
     # Vẽ biểu đồ 4 panel (2x2): Matrix, dHash Hamming Histogram, 2D PCA Cluster, Cluster Balance
     fig, axes = plt.subplots(2, 2, figsize=(18, 12))
-    fig.suptitle(f"07. Đánh giá Rò rỉ Dữ liệu Toàn diện (MD5, dHash & Phân cụm PCA){' – ' + tag if tag else ''}",
+    fig.suptitle(f"07. Đánh giá Rò rỉ Dữ liệu trên Canvas Chuẩn 640×640 (MD5, Scene Similarity & Phân cụm PCA){' – ' + tag if tag else ''}",
                  fontsize=14, fontweight="bold")
 
     # Panel [0, 0]: Ma trận giao nhau (Stem / Hash)
@@ -747,7 +754,7 @@ def check_and_plot_data_leakage(
     ax0.set_yticks(range(n_splits))
     ax0.set_xticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
     ax0.set_yticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
-    ax0.set_title("1. Ma trận trùng lặp file & MD5 (Exact Match)", fontsize=11, fontweight="bold")
+    ax0.set_title("1. Ma trận trùng lặp file & MD5 trên Canvas 640×640", fontsize=11, fontweight="bold")
 
     for i in range(n_splits):
         for j in range(n_splits):
@@ -757,7 +764,7 @@ def check_and_plot_data_leakage(
             color = "#1D3557" if is_diag else ("#E63946" if val > 0 else "#2A9D8F")
             ax0.text(j, i, txt, ha="center", va="center", fontsize=10, fontweight="bold", color=color)
 
-    # Panel [0, 1]: Histogram dHash Hamming Distance (Near-duplicates)
+    # Panel [0, 1]: Histogram dHash Hamming Distance (Near-duplicates trên Canvas 640x640)
     ax1 = axes[0][1]
     if min_dists is not None:
         bins = np.arange(-0.5, max(min_dists) + 1.5, 1)
@@ -772,14 +779,14 @@ def check_and_plot_data_leakage(
             else:
                 p.set_facecolor("#2A9D8F")  # Xanh an toàn
 
-        ax1.axvline(5.5, color="#E63946", linestyle="--", linewidth=2, label="Ngưỡng Near-duplicate (≤ 5 bit)")
+        ax1.axvline(5.5, color="#E63946", linestyle="--", linewidth=2, label="Ngưỡng Near-duplicate (≤ 5)")
         ax1.axvline(np.median(min_dists), color="#1D3557", linestyle="-", linewidth=2,
-                    label=f"Trung vị khoảng cách = {np.median(min_dists):.0f} bit")
+                    label=f"Trung vị khoảng cách = {np.median(min_dists):.0f}")
 
         pct_val = dhash_results.get("near_duplicates_pct_le_5", 0)
-        ax1.set_xlabel("Khoảng cách Hamming (Số bit khác biệt trên 64 bit)", fontsize=10)
+        ax1.set_xlabel("Mức độ khác biệt đặc trưng bối cảnh trên ảnh 640×640 (Ngưỡng rò rỉ ≤ 5: Frame liên tiếp)", fontsize=10)
         ax1.set_ylabel("Số lượng ảnh Test", fontsize=10)
-        ax1.set_title(f"2. Phân bố dHash Hamming Distance (Near-duplicate: {pct_val:.1f}%)",
+        ax1.set_title(f"2. Phân bố Độ tương đồng Bối cảnh trên Canvas 640×640 (Near-duplicate: {pct_val:.1f}%)",
                       fontsize=11, fontweight="bold")
         ax1.grid(axis="y", linestyle=":", alpha=0.5)
         ax1.legend(fontsize=9.5)
@@ -799,7 +806,7 @@ def check_and_plot_data_leakage(
                     alpha=0.75, s=28, color="#FB5607", label="Test Split", marker="^", edgecolors="none")
         ax2.set_xlabel("Principal Component 1 (PCA 1)", fontsize=10)
         ax2.set_ylabel("Principal Component 2 (PCA 2)", fontsize=10)
-        ax2.set_title("3. Không gian đặc trưng 2D PCA (Train vs Test)", fontsize=11, fontweight="bold")
+        ax2.set_title("3. Không gian đặc trưng 2D PCA từ Canvas 640×640 (Train vs Test)", fontsize=11, fontweight="bold")
         ax2.grid(linestyle=":", alpha=0.5)
         ax2.legend(fontsize=9.5)
     else:
@@ -824,7 +831,7 @@ def check_and_plot_data_leakage(
         ax3.set_xticks(x_cl)
         ax3.set_xticklabels([f"Cụm {k+1}" for k in x_cl], fontsize=9.5, fontweight="bold")
         ax3.set_ylabel("Tỷ lệ phân bố (%)", fontsize=10)
-        ax3.set_title("4. Phân bố theo Cụm đặc trưng (Cluster Balance)", fontsize=11, fontweight="bold")
+        ax3.set_title("4. Phân bố theo Cụm đặc trưng trên Canvas 640×640 (Cluster Balance)", fontsize=11, fontweight="bold")
         ax3.grid(axis="y", linestyle=":", alpha=0.5)
         ax3.legend(fontsize=9.5)
     else:
@@ -837,7 +844,7 @@ def check_and_plot_data_leakage(
 
     status_note = (
         f"Kết luận: Stem/MD5 Overlap = 0 (Không trùng file). "
-        f"Tuy nhiên dHash phát hiện {pct_near:.1f}% ảnh Test là Near-Duplicate (rò rỉ chuỗi video / bối cảnh liên tiếp)."
+        f"Tuy nhiên trên canvas 640×640 phát hiện {pct_near:.1f}% ảnh Test là Near-Duplicate (rò rỉ chuỗi video / bối cảnh liên tiếp giữa Train và Test)."
     )
     fig.text(0.5, 0.015, status_note, ha="center", fontsize=11, fontweight="bold", color="#1F2937")
 
@@ -1344,31 +1351,40 @@ def main(argv=None) -> None:
         "splits": split_stats,
     }
 
+    # Phân chia thư mục lưu trữ cho raw và processed
+    figures_root = figures_dir
+    if figures_dir.name in ("raw", "processed"):
+        target_dir = figures_dir
+        figures_root = figures_dir.parent
+    else:
+        target_dir = figures_root / tag if tag in ("raw", "processed") else figures_root
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     # ── 01. Class distribution (Gộp 52 lớp, sắp xếp giảm dần, cột đứng xoay 90°) ──
     print("\n[EDA] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
-    plot_class_distribution(all_boxes, classes, figures_dir, tag=tag)
+    plot_class_distribution(all_boxes, classes, target_dir, tag=tag)
 
     # ── 02. Boxes per Image / Label File ──
     print("\n[EDA] 02 Boxes per label / image distribution...")
-    plot_boxes_per_image(data_root, all_boxes, figures_dir, tag=tag)
+    plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
 
     # ── 03. Box dimensions ──
     print("\n[EDA] 03 Box dimensions...")
-    plot_box_dimensions(all_boxes, figures_dir, image_size=args.image_size, tag=tag)
+    plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
 
     # ── 04. Box center heatmap ──
     print("\n[EDA] 04 Box center heatmap...")
-    plot_box_center_heatmap(all_boxes, figures_dir, tag=tag)
+    plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
 
     # ── 05. Images per split ──
     print("\n[EDA] 05 Images per split...")
-    plot_images_per_split(split_stats, figures_dir, tag=tag)
+    plot_images_per_split(split_stats, target_dir, tag=tag)
 
     # ── 06. Tiny box candidates ──
     print("\n[EDA] 06 Tiny box candidates...")
     plot_tiny_box_candidates(
         all_boxes,
-        figures_dir,
+        target_dir,
         min_box_px=args.min_box_px,
         image_size=args.image_size,
         tag=tag,
@@ -1376,38 +1392,53 @@ def main(argv=None) -> None:
 
     # ── 07. Data leakage & Feature Clustering ──
     print("\n[EDA] 07 Data leakage check & PCA Feature Clustering...")
-    leak_res = check_and_plot_data_leakage(data_root, split_stems, figures_dir, tag=tag)
+    leak_res = check_and_plot_data_leakage(data_root, split_stems, target_dir, tag=tag)
     summary_meta["leakage"] = leak_res
 
     # ── 08. Brightness & Sharpness ──
     print(f"\n[EDA] 08 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
     qual_res = analyze_and_plot_brightness_sharpness(
-        img_paths, figures_dir, max_samples=args.quality_samples, tag=tag
+        img_paths, target_dir, max_samples=args.quality_samples, tag=tag
     )
     summary_meta["quality"] = qual_res
 
     # ── 09. Image properties & metadata ──
     print("\n[EDA] 09 Image properties & metadata...")
-    props_res = analyze_and_plot_image_properties(img_paths, figures_dir, tag=tag)
+    props_res = analyze_and_plot_image_properties(img_paths, target_dir, tag=tag)
     summary_meta["properties"] = props_res
 
     # ── 10. Demo n tấm ảnh có label ──
     print(f"\n[EDA] 10 Demo {args.num_samples} ảnh mẫu kèm label...")
     plot_sample_labeled_images(
-        data_root, all_boxes, classes, figures_dir,
+        data_root, all_boxes, classes, target_dir,
         num_samples=args.num_samples, seed=42, tag=tag
     )
 
     # Lưu tóm tắt kết quả
-    summary_path = figures_dir / f"eda_summary_{tag}.json"
+    summary_path = target_dir / f"eda_summary_{tag}.json"
+    clean_summary_path = target_dir / "eda_summary.json"
+    root_summary_path = figures_root / f"eda_summary_{tag}.json"
     try:
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary_meta, f, indent=2, ensure_ascii=False)
+        shutil.copy2(summary_path, clean_summary_path)
+        if target_dir != figures_root:
+            shutil.copy2(summary_path, root_summary_path)
         print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
     except Exception as e:
         print(f"  [Warn] Không thể lưu summary json: {e}")
 
-    print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 10 biểu đồ từ 01–10 đã ghi tại: {figures_dir}")
+    # Đảm bảo tạo bản sao không có hậu tố _tag trong target_dir và đồng bộ về figures_root
+    if tag:
+        for p in target_dir.glob(f"*_{tag}.png"):
+            clean_name = p.name.replace(f"_{tag}.", ".")
+            clean_p = target_dir / clean_name
+            shutil.copy2(p, clean_p)
+            if target_dir != figures_root:
+                shutil.copy2(p, figures_root / p.name)
+                shutil.copy2(p, figures_root / clean_name)
+
+    print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 10 biểu đồ từ 01–10 đã ghi tại: {target_dir}")
 
 
 if __name__ == "__main__":
