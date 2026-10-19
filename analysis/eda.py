@@ -1222,9 +1222,18 @@ def plot_sample_labeled_images(
     if not valid_stems:
         return
 
-    rng = random.Random(seed)
+    # Bộ ảnh mẫu cố định để đảm bảo ảnh ở raw và processed hoàn toàn trùng khớp (dễ so sánh trực quan)
+    fixed_samples = ["0120", "0466", "0505", "0628", "1005", "1113", "1245", "2945", "3131"]
+    common_fixed = [s for s in fixed_samples if s in valid_stems]
+
     n_show = min(num_samples, len(valid_stems))
-    selected_stems = rng.sample(valid_stems, n_show)
+    if len(common_fixed) >= n_show:
+        selected_stems = common_fixed[:n_show]
+    else:
+        selected_stems = list(common_fixed)
+        remaining = sorted([s for s in valid_stems if s not in selected_stems])
+        rng = random.Random(seed)
+        selected_stems.extend(rng.sample(remaining, n_show - len(selected_stems)))
 
     cols = 3 if n_show <= 9 else 4
     rows = (n_show + cols - 1) // cols
