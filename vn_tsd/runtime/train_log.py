@@ -3,6 +3,13 @@
 Same progress bar and epoch line as the classification DL pipeline,
 with detection metrics instead of accuracy and macro F1.
 Both teams call this. Do not print a different epoch format.
+
+TODO [Hai team pipeline]: gọi history_row/log_epoch bằng metric VALIDATION sau
+mỗi epoch; chỉ rank chính in log và ghi history.json. Metric thiếu giữ None
+(JSON null), hiển thị N/A. Không đổi thành 0 để che phần chưa triển khai.
+TODO [Team pipeline Faster R-CNN + preprocessing online]: chọn best/early stop
+bằng validation mAP50-95 trong train loop; is_best chỉ đánh dấu để hiển thị,
+module logging này không tự lưu checkpoint hoặc điều khiển early stopping.
 """
 from __future__ import annotations
 
@@ -13,8 +20,7 @@ from tqdm import tqdm
 
 log = logging.getLogger(__name__)
 
-METRIC_KEYS = ("mAP50-95", "mAP50", "mAP75", "AR100")
-PRIMARY_METRIC = "mAP50-95"
+from vn_tsd.eval.metrics import METRIC_KEYS, PRIMARY_METRIC, summarize
 
 
 def train_bar(
@@ -52,8 +58,8 @@ def history_row(
         "val_loss": round(float(val_loss), 5),
         "lr": float(lr),
     }
-    for key in METRIC_KEYS:
-        row[key] = round(float(metrics.get(key, 0.0)), 5)
+    for key, value in summarize(metrics).items():
+        row[key] = round(value, 5) if value is not None else None
     return row
 
 
@@ -74,11 +80,17 @@ def format_epoch_line(
         f"train_loss: {float(train_loss):.4f}",
         f"val_loss: {float(val_loss):.4f}",
     ]
+    scores = summarize(metrics)
     for key in METRIC_KEYS:
-        parts.append(f"{key}: {float(metrics.get(key, 0.0)):.4f}")
+        value = scores[key]
+        display = f"{value:.4f}" if value is not None else "N/A"
+        parts.append(f"{key}: {display}")
     line = " | ".join(parts) + f" | lr: {float(lr):.2e}"
     if is_best:
-        score = float(metrics.get(primary, 0.0))
+        value = metrics.get(primary)
+        if value is None:
+            raise ValueError(f"Cannot mark best checkpoint without {primary}")
+        score = float(value)
         line += f" -> [BEST VAL {primary}: {score:.4f}]"
     return line
 

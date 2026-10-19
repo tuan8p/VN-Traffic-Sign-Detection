@@ -1,3 +1,10 @@
+"""CLI dùng chung: đọc config của run, gọi evaluate(), lưu test_metrics.json.
+
+TODO [Team pipeline Faster R-CNN + preprocessing online]: hiện thực evaluate()
+trong pipeline của mình, trả dict bốn metric theo eval/metrics.py. Không thêm
+inference/COCOeval ở CLI này. Config đã lưu được dùng nguyên, không merge lại
+.env/YAML hiện tại. Nhánh R-CNN vẫn scaffold và sẽ báo chưa triển khai.
+"""
 from __future__ import annotations
 
 import argparse
