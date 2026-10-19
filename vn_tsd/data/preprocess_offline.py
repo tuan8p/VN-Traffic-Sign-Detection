@@ -296,22 +296,53 @@ def _analyze_leakage_and_save_clean_test(
         else:
             clean_test_stems.append(stem)
 
+    # ── Loại bỏ các ảnh rò rỉ khỏi thư mục test/ để bảo toàn tính độc lập của tập test ──
+    n_removed_imgs = 0
+    n_removed_boxes = 0
+    test_img_dir = out_root / "images" / "test"
+    test_lbl_dir = out_root / "labels" / "test"
+
+    for stem in leak_test_stems:
+        img_f = test_img_dir / (stem + ".jpg")
+        lbl_f = test_lbl_dir / (stem + ".txt")
+        if img_f.exists():
+            img_f.unlink()
+            n_removed_imgs += 1
+        if lbl_f.exists():
+            boxes = _read_raw_labels(lbl_f)
+            n_removed_boxes += len(boxes)
+            lbl_f.unlink()
+
+    # Cập nhật số lượng split test trong meta
+    if "test" in meta.get("splits", {}):
+        meta["splits"]["test"]["n_images"] -= n_removed_imgs
+        meta["splits"]["test"]["n_boxes_out"] -= n_removed_boxes
+        meta["total_boxes_kept"] -= n_removed_boxes
+
+    # Ghi cả 2 file: test_clean_files.txt và test_leaked_files.txt
     clean_file = out_root / "test_clean_files.txt"
+    leak_file = out_root / "test_leaked_files.txt"
     try:
         with open(clean_file, "w", encoding="utf-8") as f:
             f.write("\n".join(clean_test_stems) + "\n")
+        with open(leak_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(leak_test_stems) + "\n")
     except Exception as e:
-        print(f"  [Warn] Không thể ghi test_clean_files.txt: {e}")
+        print(f"  [Warn] Không thể ghi file test list: {e}")
 
     meta["leakage_analysis"] = {
-        "total_test_evaluated": len(min_dists),
-        "near_duplicates_le_5": len(leak_test_stems),
+        "total_test_raw": len(min_dists),
+        "near_duplicates_removed": len(leak_test_stems),
         "clean_test_count": len(clean_test_stems),
         "near_duplicates_pct": round(len(leak_test_stems) / len(min_dists) * 100, 2),
         "clean_test_file": "test_clean_files.txt",
+        "leaked_test_file": "test_leaked_files.txt",
+        "status": "LEAKAGE_RESOLVED_TEST_PURGED",
     }
-    print(f"[preprocess] Leakage Analysis: {len(clean_test_stems)}/{len(min_dists)} ảnh test độc lập (sạch rò rỉ).")
-    print(f"[preprocess]   Đã ghi danh sách test sạch: {clean_file}")
+    print(f"[preprocess] Xử lý Data Leakage: Đã loại bỏ {len(leak_test_stems)}/{len(min_dists)} ({meta['leakage_analysis']['near_duplicates_pct']}%) ảnh rò rỉ.")
+    print(f"[preprocess]   Tập test trong data/processed/ chỉ giữ lại {len(clean_test_stems)} ảnh sạch (100% độc lập).")
+    print(f"[preprocess]   Ghi danh sách test sạch : {clean_file}")
+    print(f"[preprocess]   Ghi danh sách rò rỉ     : {leak_file}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
