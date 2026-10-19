@@ -238,3 +238,6 @@ runs/
 !.env.example
 .venv/
 venv/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
