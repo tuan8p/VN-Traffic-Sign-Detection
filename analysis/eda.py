@@ -1422,21 +1422,16 @@ def main(argv=None) -> None:
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary_meta, f, indent=2, ensure_ascii=False)
         shutil.copy2(summary_path, clean_summary_path)
-        if target_dir != figures_root:
-            shutil.copy2(summary_path, root_summary_path)
         print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
     except Exception as e:
         print(f"  [Warn] Không thể lưu summary json: {e}")
 
-    # Đảm bảo tạo bản sao không có hậu tố _tag trong target_dir và đồng bộ về figures_root
+    # Đảm bảo tạo bản sao không có hậu tố _tag trong target_dir
     if tag:
         for p in target_dir.glob(f"*_{tag}.png"):
             clean_name = p.name.replace(f"_{tag}.", ".")
             clean_p = target_dir / clean_name
             shutil.copy2(p, clean_p)
-            if target_dir != figures_root:
-                shutil.copy2(p, figures_root / p.name)
-                shutil.copy2(p, figures_root / clean_name)
 
     print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 10 biểu đồ từ 01–10 đã ghi tại: {target_dir}")
 
