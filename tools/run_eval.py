@@ -21,11 +21,7 @@ def main(argv=None) -> None:
         choices=["faster_rcnn", "yolo26m"],
     )
     parser.add_argument("--run-dir", required=True)
-    parser.add_argument(
-        "--data-root",
-        default=None,
-        help="Override dataset location",
-    )
+
     args = parser.parse_args(argv)
 
     # 1. Load the saved experiment configuration.
@@ -43,11 +39,6 @@ def main(argv=None) -> None:
         raise ValueError(
             f"Config dùng pipeline {cfg.get('pipeline')!r}, "
             f"CLI chọn {args.pipeline!r}"
-        )
-
-    if args.data_root is not None:
-        cfg.setdefault("data", {})["root"] = str(
-            Path(args.data_root).expanduser().resolve()
         )
 
     # 2. Select the implementation.
