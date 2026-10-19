@@ -1,10 +1,20 @@
+"""YOLO training và evaluation; CLI dùng chung gọi interface BasePipeline.
+
+Đã tích hợp summarize_yolo(): ba AP native và AR100=None. R-CNN cần dùng
+summarize() với kết quả evaluator của mình, không dùng adapter Ultralytics.
+TODO [Team pipeline YOLO26m + preprocessing online]: nối callback log/history,
+kiểm chứng best checkpoint và early stopping dùng validation mAP50-95.
+TODO [Hai team pipeline]: thống nhất COCO evaluator trước khi so sánh cuối cùng;
+test chỉ đánh giá model đã chọn, không dùng để tune hay chọn checkpoint.
+W&B dự kiến tích hợp ở notebook Kaggle; hiện file này chưa quản lý W&B.
+"""
 from __future__ import annotations
 from typing import Any
 from pathlib import Path
 import shutil
 
 
-from vn_tsd.data.preprocess_online import describe_online_preprocess
+from vn_tsd.eval.metrics import summarize_yolo
 from vn_tsd.pipelines.base import BasePipeline
 from vn_tsd.utils.io import save_json, save_yaml
 
@@ -104,11 +114,8 @@ class YOLOPipeline(BasePipeline):
         train_args = self._build_train_args()
 
         model = build_yolo26m(self.cfg)
-
         model.train(**train_args)
-
-        checkpoint = self._save_checkpoint(model)
-
+        self._save_checkpoint(model)
         test_metrics = self.evaluate()
 
         metrics = {
@@ -118,15 +125,11 @@ class YOLOPipeline(BasePipeline):
                 "weights", "yolo26m.pt"
             ),
             "online": describe_online_preprocess(self.cfg),
-            "primary_metric": self.cfg.get("train", {}).get("primary_metric", "mAP50-95"),
+            "primary_metric": self.cfg["metrics"]["primary"],
+            "metric_source": "ultralytics-native",
             "test_metrics": test_metrics
-        }   
-
-
+        }
         save_json(metrics, self.run_dir / "metrics.json")
-        # Log each epoch with vn_tsd.runtime.train_log (train_bar, note_loss, log_epoch, log_early_stop). Same line for both pipelines.
-        # Team YOLO: pass the shared train and eval totals to Ultralytics. Do not divide them.
-        # TODO [Team pipeline YOLO26m + preprocessing online]: model.train(...) with online aug flags mapped onto Ultralytics hyp
         return metrics
 
     def evaluate(self) -> dict[str, Any]:
@@ -164,11 +167,5 @@ class YOLOPipeline(BasePipeline):
             exist_ok=True,
         )
 
-        # 4. Extract metrics
-        metrics = {
-            "mAP50-95": float(results.box.map),
-            "mAP50": float(results.box.map50),
-            "mAP75": float(results.box.map75),
-        }
-
-        return metrics
+        # Native AP is available; COCO AR100 remains unavailable.
+        return summarize_yolo(results)
