@@ -16,6 +16,7 @@ def main(argv=None) -> None:
     print("pipeline:", args.pipeline)
     print("run_dir:", Path(args.run_dir))
     # TODO [Team pipeline YOLO26m + preprocessing online]: if pipeline is yolo26m, load the Ultralytics checkpoint and report mAP.
+    
     # TODO [Team pipeline Faster R-CNN + preprocessing online]: if pipeline is faster_rcnn, load the torchvision checkpoint and report mAP.
 
 if __name__ == "__main__":
