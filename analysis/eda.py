@@ -219,7 +219,7 @@ def plot_class_distribution(
     ax.legend(fontsize=11, loc="upper right")
 
     plt.tight_layout()
-    fname = out_dir / ("01_class_distribution" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "01_class_distribution.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -348,7 +348,7 @@ def plot_boxes_per_image(
     )
 
     plt.tight_layout()
-    fname = out_dir / ("02_boxes_per_image" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "02_boxes_per_image.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -391,7 +391,7 @@ def plot_box_dimensions(
     _hist(axes[1][1], areas,   "Area (pixels²)",  "Diện tích Bounding Box (px²)",          "#8338EC")
 
     plt.tight_layout()
-    fname = out_dir / ("03_box_dimensions" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "03_box_dimensions.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -446,7 +446,7 @@ def plot_box_center_heatmap(
     ax1.grid(linestyle=":", alpha=0.5)
 
     plt.tight_layout()
-    fname = out_dir / ("04_box_center_heatmap" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "04_box_center_heatmap.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -495,7 +495,7 @@ def plot_images_per_split(
                  f"{v:,}", ha="center", fontsize=10, fontweight="bold")
 
     plt.tight_layout()
-    fname = out_dir / ("05_images_per_split" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "05_images_per_split.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -566,7 +566,7 @@ def plot_tiny_box_candidates(
     ax1.legend(fontsize=9.5)
 
     plt.tight_layout()
-    fname = out_dir / ("06_tiny_box_candidates" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "06_tiny_box_candidates.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -583,29 +583,24 @@ def check_and_plot_data_leakage(
     out_dir: Path,
     tag: str = "",
 ) -> dict[str, Any]:
-    """Figure 07: Kiểm tra rò rỉ dữ liệu (Ma trận overlap + PCA Feature Cluster Plot giữa train và test)."""
-    splits = list(split_stems.keys())
-    results: dict[str, Any] = {"stem_leakage": {}, "content_hash_leakage": {}, "status": "PASSED"}
+    """Figure 07: Kiểm tra rò rỉ dữ liệu (Ma trận trùng lặp dHash + PCA Feature Cluster Plot giữa các split)."""
+    splits = [s for s in ("train", "val", "test") if s in split_stems and split_stems[s]]
+    if not splits:
+        splits = [s for s, stems in split_stems.items() if stems]
+
+    results: dict[str, Any] = {
+        "status": "PASSED",
+        "dhash_threshold": 5,
+        "total_leak_pairs": 0,
+        "leak_summary_by_split": {},
+        "leak_pairs": [],
+    }
 
     if len(splits) < 2:
         print("  [Leak] Chỉ có 1 split hoặc không có split_dataset, bỏ qua kiểm tra rò rỉ.")
         return results
 
-    # 1. Kiểm tra rò rỉ theo tên file (Stem overlap)
-    n_splits = len(splits)
-    stem_matrix = np.zeros((n_splits, n_splits), dtype=int)
-    for i, s1 in enumerate(splits):
-        set1 = set(split_stems[s1])
-        for j, s2 in enumerate(splits):
-            set2 = set(split_stems[s2])
-            overlap = len(set1 & set2)
-            stem_matrix[i, j] = overlap
-            if i < j:
-                results["stem_leakage"][f"{s1}_vs_{s2}"] = overlap
-                if overlap > 0:
-                    results["status"] = "LEAK_DETECTED"
-
-    # 2. Kiểm tra rò rỉ theo MD5 hash ảnh
+    # Ánh xạ tên file (stem) -> Path
     img_dir = data_root / "images"
     search_dir = img_dir if img_dir.is_dir() else data_root
     stem_to_path: dict[str, Path] = {}
@@ -613,75 +608,111 @@ def check_and_plot_data_leakage(
         if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}:
             stem_to_path[p.stem] = p
 
-    split_hashes: dict[str, dict[str, str]] = {}
-    for sname in splits:
-        split_hashes[sname] = {}
-        for stem in split_stems[sname]:
-            p = stem_to_path.get(stem)
-            if p and p.exists():
-                try:
-                    with open(p, "rb") as fp:
-                        h = hashlib.md5(fp.read()).hexdigest()
-                        split_hashes[sname][stem] = h
-                except Exception:
-                    pass
+    # 1. Tính toán dHash (Difference Hash) trên toàn bộ các split (sử dụng cache tránh tính lại)
+    print("  [Leak] Đang tính mã băm dHash (Perceptual Hashing) cho toàn bộ các split...")
+    dhash_cache: dict[str, np.ndarray | None] = {}
 
-    hash_matrix = np.zeros((n_splits, n_splits), dtype=int)
+    def _calc_dhash(stem: str) -> np.ndarray | None:
+        if stem in dhash_cache:
+            return dhash_cache[stem]
+        p = stem_to_path.get(stem)
+        if not p or not p.exists():
+            dhash_cache[stem] = None
+            return None
+        try:
+            with Image.open(p) as img:
+                w, h = img.size
+                # Căn chỉnh với canvas 640x640: nếu là ảnh letterbox, chỉ băm vùng nội dung thực tế (140->500)
+                if w == 640 and h == 640:
+                    img_active = img.crop((0, 140, 640, 500))
+                else:
+                    img_active = img
+                img_gray = img_active.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
+                arr = np.array(img_gray, dtype=np.int16)
+                res = (arr[:, 1:] > arr[:, :-1]).flatten()
+                dhash_cache[stem] = res
+                return res
+        except Exception:
+            dhash_cache[stem] = None
+            return None
+
+    split_valid_stems: dict[str, list[str]] = {}
+    split_packed: dict[str, np.ndarray] = {}
+    for s in splits:
+        stems = split_stems[s]
+        valid = [st for st in stems if _calc_dhash(st) is not None]
+        split_valid_stems[s] = valid
+        if valid:
+            mat = np.array([_calc_dhash(st) for st in valid], dtype=np.uint8)
+            split_packed[s] = np.packbits(mat, axis=1)
+        else:
+            split_packed[s] = np.zeros((0, 8), dtype=np.uint8)
+
+    # 2. Xây dựng Ma trận Trùng lặp dHash và thu thập chi tiết các cặp rò rỉ (Hamming distance <= 5)
+    popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
+    n_splits = len(splits)
+
+    leak_matrix = np.zeros((n_splits, n_splits), dtype=int)
+    leak_pair_matrix = np.zeros((n_splits, n_splits), dtype=int)
+    all_leak_pairs: list[dict[str, Any]] = []
+    leak_summary_by_split: dict[str, Any] = {}
+
     for i, s1 in enumerate(splits):
-        hashes1 = set(split_hashes[s1].values())
         for j, s2 in enumerate(splits):
-            hashes2 = set(split_hashes[s2].values())
-            overlap = len(hashes1 & hashes2) if hashes1 and hashes2 else 0
-            hash_matrix[i, j] = overlap
+            if i == j:
+                leak_matrix[i, j] = len(split_stems[s1])
+                leak_pair_matrix[i, j] = len(split_stems[s1])
+                continue
+
+            p1 = split_packed.get(s1)
+            p2 = split_packed.get(s2)
+            if p1 is None or p2 is None or len(p1) == 0 or len(p2) == 0:
+                continue
+
+            xor = np.bitwise_xor(p1[:, None, :], p2[None, :, :])
+            dist = popcount[xor].sum(axis=2)
+
+            leaked_i, leaked_j = np.where(dist <= 5)
+            n_pairs = len(leaked_i)
+            n_unique_s1 = len(np.unique(leaked_i))
+            n_unique_s2 = len(np.unique(leaked_j))
+
+            leak_matrix[i, j] = n_unique_s1
+            leak_pair_matrix[i, j] = n_pairs
+
             if i < j:
-                results["content_hash_leakage"][f"{s1}_vs_{s2}"] = overlap
-                if overlap > 0:
-                    results["status"] = "CONTENT_DUPLICATE_LEAK_DETECTED"
+                split_pair_key = f"{s1}_vs_{s2}"
+                leak_summary_by_split[split_pair_key] = {
+                    "leak_pairs_count": int(n_pairs),
+                    f"{s1}_images_leaked": int(n_unique_s1),
+                    f"{s2}_images_leaked": int(n_unique_s2),
+                    f"{s1}_leak_pct": round(float(n_unique_s1 / max(len(split_stems[s1]), 1) * 100), 2),
+                    f"{s2}_leak_pct": round(float(n_unique_s2 / max(len(split_stems[s2]), 1) * 100), 2),
+                }
 
-    # 3. Tính toán dHash (Difference Hash - Perceptual Hashing) để phát hiện Near-duplicates
-    train_stems = split_stems.get("train", [])
-    test_stems = split_stems.get("test", [])
+                for k in range(n_pairs):
+                    idx1 = leaked_i[k]
+                    idx2 = leaked_j[k]
+                    st1 = split_valid_stems[s1][idx1]
+                    st2 = split_valid_stems[s2][idx2]
+                    all_leak_pairs.append({
+                        "split_a": s1,
+                        "image_a": stem_to_path[st1].name if st1 in stem_to_path else f"{st1}.jpg",
+                        "split_b": s2,
+                        "image_b": stem_to_path[st2].name if st2 in stem_to_path else f"{st2}.jpg",
+                        "hamming_distance": int(dist[idx1, idx2]),
+                    })
 
+    # Đánh giá riêng chi tiết Test vs Train (nếu có đủ 2 split)
     dhash_results: dict[str, Any] = {}
     min_dists: np.ndarray | None = None
-
-    if train_stems and test_stems:
-        print("  [Leak] Đang tính mã băm dHash (Perceptual Hashing) cho toàn bộ Train và Test...")
-        def _calc_dhash(stem: str) -> np.ndarray | None:
-            p = stem_to_path.get(stem)
-            if not p or not p.exists():
-                return None
-            try:
-                with Image.open(p) as img:
-                    w, h = img.size
-                    # Căn chỉnh với canvas 640x640: nếu là ảnh letterbox, chỉ băm vùng nội dung thực tế (140->500)
-                    if w == 640 and h == 640:
-                        img_active = img.crop((0, 140, 640, 500))
-                    else:
-                        img_active = img
-                    img_gray = img_active.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
-                    arr = np.array(img_gray, dtype=np.int16)
-                    return (arr[:, 1:] > arr[:, :-1]).flatten()
-            except Exception:
-                return None
-
-        tr_hashes = [_calc_dhash(s) for s in train_stems]
-        te_hashes = [_calc_dhash(s) for s in test_stems]
-
-        valid_tr = [h for h in tr_hashes if h is not None]
-        valid_te = [h for h in te_hashes if h is not None]
-
-        if valid_tr and valid_te:
-            tr_mat = np.array(valid_tr, dtype=np.uint8)
-            te_mat = np.array(valid_te, dtype=np.uint8)
-
-            tr_packed = np.packbits(tr_mat, axis=1)
-            te_packed = np.packbits(te_mat, axis=1)
-            xor_mat = np.bitwise_xor(te_packed[:, None, :], tr_packed[None, :, :])
-            popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
-            hamm_dist = popcount[xor_mat].sum(axis=2)
-
-            min_dists = hamm_dist.min(axis=1)
+    if "train" in split_packed and "test" in split_packed:
+        p_tr = split_packed["train"]
+        p_te = split_packed["test"]
+        if len(p_tr) > 0 and len(p_te) > 0:
+            xor_te_tr = np.bitwise_xor(p_te[:, None, :], p_tr[None, :, :])
+            hamm_te_tr = popcount[xor_te_tr].sum(axis=2)
+            min_dists = hamm_te_tr.min(axis=1)
 
             n_near_3 = int((min_dists <= 3).sum())
             n_near_5 = int((min_dists <= 5).sum())
@@ -696,11 +727,17 @@ def check_and_plot_data_leakage(
                 "near_duplicates_le_5": n_near_5,
                 "near_duplicates_pct_le_5": round(pct_near_5, 2),
             }
-            results["dhash_leakage"] = dhash_results
-            print(f"  [dHash] Khoảng cách Hamming nhỏ nhất: {min_dists.min()} bit")
-            print(f"  [dHash] Số ảnh Near-duplicate (Hamming <= 5 bit): {n_near_5}/{len(min_dists)} ({pct_near_5:.2f}%)")
+            print(f"  [dHash] Khoảng cách Hamming nhỏ nhất (Test vs Train): {min_dists.min()} bit")
+            print(f"  [dHash] Số ảnh Test rò rỉ (Hamming <= 5 bit): {n_near_5}/{len(min_dists)} ({pct_near_5:.2f}%)")
 
-    # 4. Phân tích Cụm đặc trưng (Feature Clustering & PCA)
+    total_leaks = len(all_leak_pairs)
+    results["status"] = "PASSED" if total_leaks == 0 else "LEAK_DETECTED"
+    results["total_leak_pairs"] = total_leaks
+    results["leak_summary_by_split"] = leak_summary_by_split
+    results["dhash_test_to_train"] = dhash_results
+    results["leak_pairs"] = all_leak_pairs
+
+    # 3. Phân tích Cụm đặc trưng (Feature Clustering & PCA)
     sample_train = split_stems.get("train", [])[:500]
     sample_test = split_stems.get("test", [])[:500]
     eval_stems = sample_train + sample_test
@@ -715,7 +752,6 @@ def check_and_plot_data_leakage(
                 img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
                 if img is not None:
                     h, w = img.shape[:2]
-                    # Nếu là ảnh letterbox 640x640: cắt bỏ dải padding 140px
                     if w == 640 and h == 640:
                         img = img[140:500, :]
                     thumb = cv2.resize(img, (16, 16)).flatten() / 255.0
@@ -742,38 +778,59 @@ def check_and_plot_data_leakage(
         except Exception:
             cluster_labels = np.zeros(len(features), dtype=int)
 
-    # Vẽ biểu đồ 4 panel (2x2): Matrix, dHash Hamming Histogram, 2D PCA Cluster, Cluster Balance
+    # 4. Vẽ biểu đồ 4 panel (2x2): Ma trận dHash Overlap, Histogram Hamming, 2D PCA, Phân bố Cụm
     fig, axes = plt.subplots(2, 2, figsize=(18, 12))
-    fig.suptitle(f"07. Đánh giá Rò rỉ Dữ liệu trên Canvas Chuẩn 640×640 (MD5, Scene Similarity & Phân cụm PCA){' – ' + tag if tag else ''}",
-                 fontsize=14, fontweight="bold")
+    fig.suptitle(
+        f"07. Đánh giá Rò rỉ Dữ liệu dHash trên Canvas Chuẩn 640×640 & Phân cụm Đặc trưng PCA{' – ' + tag if tag else ''}",
+        fontsize=14, fontweight="bold"
+    )
 
-    # Panel [0, 0]: Ma trận giao nhau (Stem / Hash)
+    # Panel [0, 0]: Ma trận Trùng lặp dHash (Ngưỡng Hamming <= 5 bit)
     ax0 = axes[0][0]
-    im = ax0.imshow(stem_matrix, cmap="Blues", interpolation="nearest")
+    rgba_grid = np.zeros((n_splits, n_splits, 4), dtype=float)
+    for i in range(n_splits):
+        for j in range(n_splits):
+            if i == j:
+                rgba_grid[i, j] = [0.89, 0.95, 0.99, 1.0]      # Light blue (Đường chéo)
+            elif leak_pair_matrix[i, j] == 0:
+                rgba_grid[i, j] = [0.91, 0.96, 0.91, 1.0]      # Light green (Sạch 100%)
+            else:
+                rgba_grid[i, j] = [1.0, 0.92, 0.93, 1.0]        # Light red (Phát hiện rò rỉ)
+
+    ax0.imshow(rgba_grid, interpolation="nearest")
     ax0.set_xticks(range(n_splits))
     ax0.set_yticks(range(n_splits))
     ax0.set_xticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
     ax0.set_yticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
-    ax0.set_title("1. Ma trận trùng lặp file & MD5 trên Canvas 640×640", fontsize=11, fontweight="bold")
+    ax0.set_title("1. Ma trận Trùng lặp dHash giữa các Split (Hamming ≤ 5 bit)", fontsize=11, fontweight="bold")
 
     for i in range(n_splits):
         for j in range(n_splits):
-            val = stem_matrix[i, j]
             is_diag = (i == j)
-            txt = f"{val:,}" if is_diag else (f"Trùng: {val}" if val > 0 else "0 (An toàn)")
-            color = "#1D3557" if is_diag else ("#E63946" if val > 0 else "#2A9D8F")
-            ax0.text(j, i, txt, ha="center", va="center", fontsize=10, fontweight="bold", color=color)
+            if is_diag:
+                txt = f"{len(split_stems[splits[i]]):,}\n(Tổng ảnh)"
+                color = "#1D3557"
+            else:
+                n_pairs = leak_pair_matrix[i, j]
+                if n_pairs == 0:
+                    txt = "0\n(Sạch)"
+                    color = "#2A9D8F"
+                else:
+                    n_u = leak_matrix[i, j]
+                    pct = n_u / max(len(split_stems[splits[i]]), 1) * 100
+                    txt = f"Leak: {n_pairs:,} cặp\n({pct:.1f}% ảnh {splits[i].upper()})"
+                    color = "#E63946"
+            ax0.text(j, i, txt, ha="center", va="center", fontsize=9.5, fontweight="bold", color=color)
 
-    # Panel [0, 1]: Histogram dHash Hamming Distance (Near-duplicates trên Canvas 640x640)
+    # Panel [0, 1]: Histogram dHash Hamming Distance giữa Train và Test
     ax1 = axes[0][1]
     if min_dists is not None:
         bins = np.arange(-0.5, max(min_dists) + 1.5, 1)
         counts, edges, patches_list = ax1.hist(min_dists, bins=bins, edgecolor="white", linewidth=0.5, alpha=0.85)
 
-        # Tô màu đỏ các cột <= 5 (near-duplicates) và màu xanh các cột > 5
         for edge, p in zip(edges[:-1], patches_list):
             if edge <= 5:
-                p.set_facecolor("#E63946")  # Đỏ rò rỉ bối cảnh
+                p.set_facecolor("#E63946")  # Đỏ rò rỉ bối cảnh (Hamming <= 5)
             elif edge <= 8:
                 p.set_facecolor("#FB8500")  # Cam cảnh tương đồng
             else:
@@ -784,14 +841,14 @@ def check_and_plot_data_leakage(
                     label=f"Trung vị khoảng cách = {np.median(min_dists):.0f}")
 
         pct_val = dhash_results.get("near_duplicates_pct_le_5", 0)
-        ax1.set_xlabel("Mức độ khác biệt đặc trưng bối cảnh trên ảnh 640×640 (Ngưỡng rò rỉ ≤ 5: Frame liên tiếp)", fontsize=10)
+        ax1.set_xlabel("Khoảng cách Hamming dHash giữa Test và Train (≤ 5 bit: Rò rỉ video frame)", fontsize=10)
         ax1.set_ylabel("Số lượng ảnh Test", fontsize=10)
-        ax1.set_title(f"2. Phân bố Độ tương đồng Bối cảnh trên Canvas 640×640 (Near-duplicate: {pct_val:.1f}%)",
+        ax1.set_title(f"2. Phân bố Độ tương đồng Bối cảnh Test vs Train (Near-duplicate: {pct_val:.1f}%)",
                       fontsize=11, fontweight="bold")
         ax1.grid(axis="y", linestyle=":", alpha=0.5)
         ax1.legend(fontsize=9.5)
     else:
-        ax1.text(0.5, 0.5, "Không đủ dữ liệu dHash", ha="center", va="center")
+        ax1.text(0.5, 0.5, "Không đủ dữ liệu dHash (cần cả train và test)", ha="center", va="center")
 
     # Panel [1, 0]: 2D PCA Feature Space Scatter
     ax2 = axes[1][0]
@@ -837,23 +894,29 @@ def check_and_plot_data_leakage(
     else:
         ax3.text(0.5, 0.5, "Không đủ dữ liệu phân cụm", ha="center", va="center")
 
-    # Đánh giá tổng hợp
-    pct_near = dhash_results.get("near_duplicates_pct_le_5", 0)
-    if results["status"] == "PASSED" and pct_near > 10:
-        results["status"] = "TEMPORAL_SEQUENCE_LEAKAGE_DETECTED"
-
-    status_note = (
-        f"Kết luận: Stem/MD5 Overlap = 0 (Không trùng file). "
-        f"Tuy nhiên trên canvas 640×640 phát hiện {pct_near:.1f}% ảnh Test là Near-Duplicate (rò rỉ chuỗi video / bối cảnh liên tiếp giữa Train và Test)."
-    )
-    fig.text(0.5, 0.015, status_note, ha="center", fontsize=11, fontweight="bold", color="#1F2937")
+    # Đánh giá tổng hợp ghi ở cuối biểu đồ
+    if total_leaks > 0:
+        pct_val = dhash_results.get("near_duplicates_pct_le_5", 0)
+        status_note = (
+            f"Kết luận: CẢNH BÁO – Phát hiện {total_leaks:,} cặp rò rỉ bối cảnh dHash (Hamming ≤ 5 bit). "
+            f"{pct_val:.1f}% ảnh Test bị trùng lặp chuỗi video với Train -> Cần lọc bỏ (Purge) để đảm bảo đánh giá khách quan."
+        )
+        note_color = "#E63946"
+    else:
+        min_h = dhash_results.get("min_hamming_distance", "N/A")
+        status_note = (
+            f"Kết luận: ĐẠT CHUẨN (PASSED) – 0 cặp rò rỉ bối cảnh dHash giữa các split "
+            f"(Khoảng cách Hamming nhỏ nhất giữa Test và Train: {min_h} bit > 5 bit) -> Dữ liệu hoàn toàn cô lập."
+        )
+        note_color = "#2A9D8F"
+    fig.text(0.5, 0.015, status_note, ha="center", fontsize=10.5, fontweight="bold", color=note_color)
 
     plt.tight_layout(rect=[0, 0.04, 1, 0.96])
-    fname = out_dir / ("07_data_leakage" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "07_data_leakage.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
-    print(f"  [Leak Status]: {results['status']}")
+    print(f"  [Leak Status]: {results['status']} | Tổng số cặp rò rỉ: {total_leaks:,}")
     return results
 
 
@@ -996,7 +1059,7 @@ def analyze_and_plot_brightness_sharpness(
     ax3.set_title("Tỉ lệ phân loại Chất lượng Dữ liệu", fontsize=11, fontweight="bold")
 
     plt.tight_layout()
-    fname = out_dir / ("08_brightness_sharpness" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "08_brightness_sharpness.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1107,7 +1170,7 @@ def analyze_and_plot_image_properties(
     ax3.legend(fontsize=9)
 
     plt.tight_layout()
-    fname = out_dir / ("09_image_properties" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "09_image_properties.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1219,7 +1282,7 @@ def plot_sample_labeled_images(
         ax_list[j].axis("off")
 
     plt.tight_layout()
-    fname = out_dir / ("10_sample_labels" + (f"_{tag}" if tag else "") + ".png")
+    fname = out_dir / "10_sample_labels.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1414,24 +1477,14 @@ def main(argv=None) -> None:
         num_samples=args.num_samples, seed=42, tag=tag
     )
 
-    # Lưu tóm tắt kết quả
-    summary_path = target_dir / f"eda_summary_{tag}.json"
-    clean_summary_path = target_dir / "eda_summary.json"
-    root_summary_path = figures_root / f"eda_summary_{tag}.json"
+    # Lưu tóm tắt kết quả (duy nhất 1 file eda_summary.json trong target_dir)
+    summary_path = target_dir / "eda_summary.json"
     try:
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary_meta, f, indent=2, ensure_ascii=False)
-        shutil.copy2(summary_path, clean_summary_path)
         print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
     except Exception as e:
         print(f"  [Warn] Không thể lưu summary json: {e}")
-
-    # Đảm bảo tạo bản sao không có hậu tố _tag trong target_dir
-    if tag:
-        for p in target_dir.glob(f"*_{tag}.png"):
-            clean_name = p.name.replace(f"_{tag}.", ".")
-            clean_p = target_dir / clean_name
-            shutil.copy2(p, clean_p)
 
     print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 10 biểu đồ từ 01–10 đã ghi tại: {target_dir}")
 
