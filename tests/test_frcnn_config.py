@@ -21,6 +21,9 @@ def resolved_config():
 @pytest.mark.parametrize("section,key,value", [
     ("model", "backbone", "resnet18"), ("model", "num_classes", 53),
     ("model", "trainable_backbone_layers", 3), ("model", "frozen_bn_eps", 1e-5),
+    ("model", "head", "unknown"), ("model", "head_hidden_dim", 0),
+    ("model", "head_hidden_dim", 12.5), ("model", "head_dropout", 1),
+    ("model", "head_dropout", float("nan")),
     ("train", "warmup_epochs", 2), ("train", "warmup_start_factor", 0),
     ("train", "lr", float("nan")), ("train", "epohcs", 2),
     ("runtime_cfg", "device", "auto"), ("online_preprocess", "enabled", "false"),
@@ -42,3 +45,26 @@ def test_validation_accepts_baseline_without_mutating_resolved_config():
     assert validated == before
     assert cfg == before
     assert validated is not cfg
+
+
+@pytest.mark.parametrize("head", ["standard", "custom_mlp"])
+def test_head_selection_is_explicit(head):
+    from vn_tsd.pipelines.faster_rcnn.config import predictor_config
+
+    cfg = resolved_config()
+    cfg["model"]["head"] = head
+    result = predictor_config(validate_config(cfg))
+    assert result["name"] == head
+    if head == "custom_mlp":
+        assert result["hidden_dim"] == 512 and result["dropout"] == 0.2
+
+
+def test_legacy_config_does_not_gain_new_head_fields():
+    from vn_tsd.pipelines.faster_rcnn.config import predictor_config
+
+    cfg = resolved_config()
+    for key in ("head", "head_hidden_dim", "head_dropout"):
+        cfg["model"].pop(key)
+    validated = validate_config(cfg)
+    assert validated == cfg
+    assert predictor_config(validated) == {"name": "standard"}
