@@ -11,6 +11,16 @@ MODEL_DEFAULTS = dict(weights=WEIGHTS, trainable_backbone_layers=5, frozen_bn_ep
 TRAIN_DEFAULTS = dict(scheduler="cosine", warmup_epochs=1, warmup_start_factor=0.001, min_lr=1e-6)
 ONLINE_DEFAULTS = dict(mosaic_prob=1.0, mixup_prob=0.1, mixup_alpha=32.0,
                        color_jitter_params=dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02))
+HEAD_KEYS = {"head", "head_hidden_dim", "head_dropout"}
+
+
+def predictor_config(cfg):
+    """Missing head fields mean the original standard predictor (legacy runs)."""
+    m = cfg["model"]
+    head = dict(name=m.get("head", "standard"))
+    if head["name"] == "custom_mlp":
+        head.update(version=1, hidden_dim=m.get("head_hidden_dim", 512), dropout=m.get("head_dropout", 0.2))
+    return head
 
 
 def _number(value, name, low, high=None, integer=False):
@@ -31,7 +41,7 @@ def validate_config(cfg):
         for key, value in defaults.items():
             section_cfg.setdefault(key, copy.deepcopy(value))
     m, t, o = c["model"], c["train"], c["online_preprocess"]
-    allowed_model = set(MODEL_DEFAULTS) | {"family", "backbone", "pretrained", "num_classes"}
+    allowed_model = set(MODEL_DEFAULTS) | HEAD_KEYS | {"family", "backbone", "pretrained", "num_classes"}
     allowed_online = set(ONLINE_DEFAULTS) | {"enabled", "letterbox", "normalize", "hflip", "color_jitter", "mosaic", "mixup", "jitter"}
     allowed_train = set(TRAIN_DEFAULTS) | {"epochs", "lr", "momentum", "weight_decay", "primary_metric",
         "batch_size", "amp", "require_wandb", "early_stopping_patience", "run_name"}
@@ -44,6 +54,12 @@ def validate_config(cfg):
         raise ValueError("Dataset must have 52 classes; predictor has 53 outputs")
     if m["trainable_backbone_layers"] != 5 or m["frozen_bn_eps"] != 0:
         raise ValueError("v1 requires full finetuning and FrozenBN eps=0")
+    if m.get("head", "standard") not in ("standard", "custom_mlp"):
+        raise ValueError("model.head must be standard or custom_mlp")
+    _number(m.get("head_hidden_dim", 512), "model.head_hidden_dim", 1, integer=True)
+    _number(m.get("head_dropout", 0.2), "model.head_dropout", 0, 1)
+    if m.get("head_dropout", 0.2) == 1:
+        raise ValueError("model.head_dropout must be <1")
     if c.get("preprocess", {}).get("image_size") != [640, 640]:
         raise ValueError("Processed cache must be 640x640")
     if c["preprocess"].get("pad_value") != 114 or c["preprocess"].get("hflip", False):

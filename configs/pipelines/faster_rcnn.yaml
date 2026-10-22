@@ -11,6 +11,10 @@ model:
   # Team Faster R-CNN: 52 is the dataset. Box predictor must be 53 (plus background).
   # DataLoader must use per_rank_batch so the shared total is not applied on every GPU.
   num_classes: 52
+  # Added RoI projection layers; use standard for the unchanged predictor baseline.
+  head: custom_mlp
+  head_hidden_dim: 512
+  head_dropout: 0.2
   weights: FasterRCNN_ResNet50_FPN_Weights.COCO_V1
   trainable_backbone_layers: 5
   frozen_bn_eps: 0.0
