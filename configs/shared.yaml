@@ -36,10 +36,13 @@ preprocess:
   # Offline cache is the shared finetune set. Includes letterbox and
   # augmentation that does not mirror sign classes.
   hflip: false
+  augment_minority: true
+  minority_target_boxes: 50
 
 split:
-  use_provided_splits: true
   ratios: { train: 0.7, val: 0.15, test: 0.15 }
+  hash_size: 32
+  hamming_threshold: 370
 
 # One total for both pipelines. Size it to fill the 2 Kaggle T4s.
 # Do not give each pipeline its own train or eval batch.

@@ -6,348 +6,51 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-s
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-Keeps images + YOLO boxes (no classification crop). Writes a processed tree
-both pipelines can read:
-
+Tạo bộ dữ liệu chuẩn hoá cho cả 2 pipeline tại:
     data/processed/
       images/{train,val,test}/
       labels/{train,val,test}/
       data.yaml
       meta.json
+      {train,val,test}_files.txt
 
-Steps per image:
-  1. Letterbox-resize to target (640×640 by default), pad với giá trị 114.
-  2. Cập nhật tọa độ YOLO box theo tỉ lệ scale + offset padding.
-  3. Loại bỏ box có min(w,h) < min_box_px (8px theo shared.yaml).
-  4. Ghi file ảnh mới và file nhãn mới; sinh data.yaml và meta.json.
-
-Run:
-    python -m tools.run_preprocess --data-root data/raw
+Quy trình chuẩn hóa trực tiếp từ dữ liệu ảnh (Dynamic Image Clustering & Split):
+  1. Chỉ dựa vào toàn bộ ảnh thô trong images/: Tuyệt đối không đọc hay dựa vào bất kỳ file split có sẵn nào trong split_dataset/.
+  2. BƯỚC 1: Phân cụm (Clustering):
+     - Tính Difference Hash 1024-bit (size=32, Hamming <= 370) cho toàn bộ ảnh thô.
+     - Gom toàn bộ ảnh thành các cụm tương đồng bối cảnh/chuỗi thời gian bằng thuật toán Disjoint Set Union (DSU).
+  3. BƯỚC 2: Phân chia tập (Dataset Splitting theo tỉ lệ 70% Train / 15% Val / 15% Test):
+     - Dựa vào kết quả phân cụm ở Bước 1: gán NGUYÊN VẸN từng cụm vào một tập duy nhất.
+     - ĐẢM BẢO TUYỆT ĐỐI: Không được lấy các ảnh của cùng 1 cụm mà nằm trong 2 tập khác nhau (100% Cluster Isolation).
+     - Đảm bảo tập Train có đủ toàn bộ 52/52 lớp nhãn (ưu tiên cụm chứa lớp độc nhất vào Train).
+     - Phân bổ đều ảnh tối (brightness < 85) và ảnh mờ (sharpness < 100) để cân bằng quang học giữa các tập.
+  4. BƯỚC 3: Chuẩn hoá kích thước (Letterbox Resize 640×640):
+     - Giữ nguyên tỉ lệ khung hình (aspect ratio), bù padding xám 114.
+     - Chuyển đổi toạ độ YOLO box và loại bỏ triệt để các box siêu nhỏ (< min_box_px, mặc định 8px).
+  5. BƯỚC 4: Cân bằng nhãn thiểu số cho tập Train (Data Augmentation):
+     - Tăng cường dữ liệu cho các nhãn dưới 50 box trong tập Train.
+     - Kiểm tra đối soát dHash không gây rò rỉ sang tập Val và Test.
+  6. BƯỚC 5: Xuất metadata và kiểm tra rò rỉ dữ liệu (Data Leakage Verification):
+     - Ghi nhận báo cáo vào data/processed/meta.json, data.yaml, và lưu danh sách file split tại data/processed/.
 """
 from __future__ import annotations
 
 import csv
 import json
-import os
 import random
 import shutil
 import time
 from pathlib import Path
 from typing import Any
-
 import cv2
 import numpy as np
 from PIL import Image
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────────────────
+from analysis.image_utils import calculate_dhash
+from analysis.leakage import find_leaked_test_stems
+from analysis.split import split_by_dhash_clusters
+from vn_tsd.data.augmentation import augment_minority_classes, _read_raw_labels, _write_labels
 
-def run_offline(cfg: dict[str, Any], data_root: str | Path) -> Path:
-    """Chạy pipeline preprocessing offline.
-
-    Args:
-        cfg:       Resolved config dict (từ vn_tsd.config.resolve.resolve_config).
-        data_root: Thư mục gốc dataset thô (chứa images/ và labels/).
-
-    Returns:
-        Path đến thư mục data/processed/ đã tạo.
-    """
-    data_root = Path(data_root).resolve()
-    if not data_root.exists():
-        raise FileNotFoundError(f"data_root không tồn tại: {data_root}")
-
-    # ── Đọc config ──
-    pre_cfg = cfg.get("preprocess", {})
-    img_size_cfg = pre_cfg.get("image_size", [640, 640])
-    if isinstance(img_size_cfg, int):
-        target_h = target_w = img_size_cfg
-    else:
-        target_h, target_w = img_size_cfg[1], img_size_cfg[0]
-    pad_value: int = int(pre_cfg.get("pad_value", 114))
-    min_box_px: int = int(pre_cfg.get("min_box_px", 8))
-
-    split_cfg = cfg.get("split", {})
-    use_provided: bool = bool(split_cfg.get("use_provided_splits", True))
-    ratios: dict[str, float] = split_cfg.get("ratios", {"train": 0.7, "val": 0.15, "test": 0.15})
-
-    data_cfg = cfg.get("data", {})
-    class_table_path = Path(data_cfg.get("class_table", "configs/classes.csv"))
-    if not class_table_path.is_absolute():
-        # Thử relative từ repo root
-        _repo = Path(__file__).resolve().parents[2]
-        class_table_path = _repo / class_table_path
-
-    # Out dir
-    _repo_root = Path(__file__).resolve().parents[2]
-    out_root = _repo_root / "data" / "processed"
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    seed = int(cfg.get("seed", 42))
-    rng = random.Random(seed)
-
-    print(f"[preprocess] data_root  : {data_root}")
-    print(f"[preprocess] out_root   : {out_root}")
-    print(f"[preprocess] target size: {target_w}×{target_h}")
-    print(f"[preprocess] min_box_px : {min_box_px}")
-    print(f"[preprocess] pad_value  : {pad_value}")
-
-    # ── Đọc classes ──
-    classes = _load_classes(class_table_path)
-    num_classes = len(classes)
-    print(f"[preprocess] Số lớp     : {num_classes}")
-
-    # ── Tìm ảnh + nhãn ──
-    img_dir = data_root / "images"
-    lbl_dir = data_root / "labels"
-    if not img_dir.is_dir():
-        raise FileNotFoundError(f"Không tìm thấy thư mục images: {img_dir}")
-    if not lbl_dir.is_dir():
-        raise FileNotFoundError(f"Không tìm thấy thư mục labels: {lbl_dir}")
-
-    img_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-    img_paths = sorted([
-        p for p in img_dir.iterdir()
-        if p.suffix.lower() in img_extensions
-    ])
-    print(f"[preprocess] Tổng ảnh gốc: {len(img_paths)}")
-
-    # ── Phân chia split ──
-    splits = _discover_splits(data_root, img_paths, use_provided, ratios, rng)
-    for sname, stems in splits.items():
-        print(f"[preprocess]   {sname}: {len(stems)} ảnh")
-
-    # ── Tạo thư mục output ──
-    for sname in splits:
-        (out_root / "images" / sname).mkdir(parents=True, exist_ok=True)
-        (out_root / "labels" / sname).mkdir(parents=True, exist_ok=True)
-
-    # ── Xử lý từng split ──
-    meta: dict[str, Any] = {
-        "config": {
-            "target_size": [target_w, target_h],
-            "pad_value": pad_value,
-            "min_box_px": min_box_px,
-            "num_classes": num_classes,
-            "seed": seed,
-        },
-        "splits": {},
-    }
-
-    t0 = time.time()
-    stem_to_imgpath = {p.stem: p for p in img_paths}
-
-    total_dropped_tiny = 0
-    total_kept = 0
-
-    for sname, stems in splits.items():
-        n_imgs = 0
-        n_boxes_in = 0
-        n_boxes_out = 0
-        n_tiny_dropped = 0
-        n_no_label = 0
-
-        for stem in stems:
-            src_img = stem_to_imgpath.get(stem)
-            if src_img is None:
-                continue
-            src_lbl = lbl_dir / (stem + ".txt")
-
-            # Đọc nhãn gốc
-            raw_boxes = _read_raw_labels(src_lbl)
-            n_boxes_in += len(raw_boxes)
-
-            # Đọc ảnh
-            img = cv2.imread(str(src_img))
-            if img is None:
-                print(f"  [WARN] Không đọc được ảnh: {src_img}")
-                continue
-
-            orig_h, orig_w = img.shape[:2]
-
-            # Letterbox
-            lb_img, scale, dw, dh = _letterbox(img, target_w, target_h, pad_value)
-
-            # Chuyển đổi box
-            new_boxes = []
-            for b in raw_boxes:
-                cid, cx, cy, bw, bh = b
-                nb = _transform_box(cx, cy, bw, bh, orig_w, orig_h, scale, dw, dh, target_w, target_h)
-                if nb is None:
-                    continue
-                ncx, ncy, nw, nh = nb
-                # Lọc tiny
-                if nw * target_w < min_box_px or nh * target_h < min_box_px:
-                    n_tiny_dropped += 1
-                    continue
-                new_boxes.append((cid, ncx, ncy, nw, nh))
-
-            n_boxes_out += len(new_boxes)
-            if len(raw_boxes) > 0 and len(new_boxes) == 0:
-                n_no_label += 1
-
-            # Ghi ảnh
-            dst_img = out_root / "images" / sname / (stem + ".jpg")
-            cv2.imwrite(str(dst_img), lb_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-
-            # Ghi nhãn
-            dst_lbl = out_root / "labels" / sname / (stem + ".txt")
-            _write_labels(dst_lbl, new_boxes)
-
-            n_imgs += 1
-
-        meta["splits"][sname] = {
-            "n_images": n_imgs,
-            "n_boxes_in": n_boxes_in,
-            "n_boxes_out": n_boxes_out,
-            "n_tiny_dropped": n_tiny_dropped,
-            "n_images_no_box_after_filter": n_no_label,
-        }
-        total_dropped_tiny += n_tiny_dropped
-        total_kept += n_boxes_out
-        print(
-            f"[preprocess]   {sname}: {n_imgs} ảnh, "
-            f"{n_boxes_out}/{n_boxes_in} box giữ lại "
-            f"({n_tiny_dropped} tiny bỏ)"
-        )
-
-    elapsed = time.time() - t0
-    meta["total_dropped_tiny"] = total_dropped_tiny
-    meta["total_boxes_kept"] = total_kept
-    meta["elapsed_seconds"] = round(elapsed, 2)
-
-    # ── Phân tích rò rỉ dữ liệu & xuất test_clean_files.txt ──
-    _analyze_leakage_and_save_clean_test(splits, stem_to_imgpath, out_root, meta)
-
-    # ── Ghi data.yaml ──
-    _write_data_yaml(out_root, classes)
-    print(f"[preprocess] data.yaml ghi tại: {out_root / 'data.yaml'}")
-
-    # ── Ghi meta.json ──
-    meta_path = out_root / "meta.json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2, ensure_ascii=False)
-    print(f"[preprocess] meta.json ghi tại: {meta_path}")
-    print(f"[preprocess] Hoàn thành trong {elapsed:.1f}s  →  {out_root}")
-
-    return out_root
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Leakage Analysis Helper
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _analyze_leakage_and_save_clean_test(
-    splits: dict[str, list[str]],
-    stem_to_imgpath: dict[str, Path],
-    out_root: Path,
-    meta: dict[str, Any],
-) -> None:
-    """Phát hiện ảnh test rò rỉ (near-duplicate) bằng dHash và xuất test_clean_files.txt."""
-    train_stems = splits.get("train", [])
-    test_stems = splits.get("test", [])
-    if not train_stems or not test_stems:
-        return
-
-    def _calc_dhash(stem: str, split_name: str) -> np.ndarray | None:
-        p = out_root / "images" / split_name / (stem + ".jpg")
-        if not p.exists():
-            p = stem_to_imgpath.get(stem)
-        if not p or not p.exists():
-            return None
-        try:
-            with Image.open(p) as img:
-                w, h = img.size
-                if w == 640 and h == 640:
-                    img_active = img.crop((0, 140, 640, 500))
-                else:
-                    img_active = img
-                img_gray = img_active.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
-                arr = np.array(img_gray, dtype=np.int16)
-                return (arr[:, 1:] > arr[:, :-1]).flatten()
-        except Exception:
-            return None
-
-    tr_hashes = [_calc_dhash(s, "train") for s in train_stems]
-    te_hashes = [_calc_dhash(s, "test") for s in test_stems]
-
-    valid_tr_indices = [i for i, h in enumerate(tr_hashes) if h is not None]
-    valid_te_indices = [i for i, h in enumerate(te_hashes) if h is not None]
-
-    if not valid_tr_indices or not valid_te_indices:
-        return
-
-    tr_mat = np.array([tr_hashes[i] for i in valid_tr_indices], dtype=np.uint8)
-    te_mat = np.array([te_hashes[i] for i in valid_te_indices], dtype=np.uint8)
-
-    tr_packed = np.packbits(tr_mat, axis=1)
-    te_packed = np.packbits(te_mat, axis=1)
-    xor_mat = np.bitwise_xor(te_packed[:, None, :], tr_packed[None, :, :])
-    popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
-    hamm_dist = popcount[xor_mat].sum(axis=2)
-    min_dists = hamm_dist.min(axis=1)
-
-    clean_test_stems = []
-    leak_test_stems = []
-    for idx_te, d in zip(valid_te_indices, min_dists):
-        stem = test_stems[idx_te]
-        if d <= 5:
-            leak_test_stems.append(stem)
-        else:
-            clean_test_stems.append(stem)
-
-    # ── Loại bỏ các ảnh rò rỉ khỏi thư mục test/ để bảo toàn tính độc lập của tập test ──
-    n_removed_imgs = 0
-    n_removed_boxes = 0
-    test_img_dir = out_root / "images" / "test"
-    test_lbl_dir = out_root / "labels" / "test"
-
-    for stem in leak_test_stems:
-        img_f = test_img_dir / (stem + ".jpg")
-        lbl_f = test_lbl_dir / (stem + ".txt")
-        if img_f.exists():
-            img_f.unlink()
-            n_removed_imgs += 1
-        if lbl_f.exists():
-            boxes = _read_raw_labels(lbl_f)
-            n_removed_boxes += len(boxes)
-            lbl_f.unlink()
-
-    # Cập nhật số lượng split test trong meta
-    if "test" in meta.get("splits", {}):
-        meta["splits"]["test"]["n_images"] -= n_removed_imgs
-        meta["splits"]["test"]["n_boxes_out"] -= n_removed_boxes
-        meta["total_boxes_kept"] -= n_removed_boxes
-
-    # Ghi cả 2 file: test_clean_files.txt và test_leaked_files.txt
-    clean_file = out_root / "test_clean_files.txt"
-    leak_file = out_root / "test_leaked_files.txt"
-    try:
-        with open(clean_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(clean_test_stems) + "\n")
-        with open(leak_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(leak_test_stems) + "\n")
-    except Exception as e:
-        print(f"  [Warn] Không thể ghi file test list: {e}")
-
-    meta["leakage_analysis"] = {
-        "total_test_raw": len(min_dists),
-        "near_duplicates_removed": len(leak_test_stems),
-        "clean_test_count": len(clean_test_stems),
-        "near_duplicates_pct": round(len(leak_test_stems) / len(min_dists) * 100, 2),
-        "clean_test_file": "test_clean_files.txt",
-        "leaked_test_file": "test_leaked_files.txt",
-        "status": "LEAKAGE_RESOLVED_TEST_PURGED",
-    }
-    print(f"[preprocess] Xử lý Data Leakage: Đã loại bỏ {len(leak_test_stems)}/{len(min_dists)} ({meta['leakage_analysis']['near_duplicates_pct']}%) ảnh rò rỉ.")
-    print(f"[preprocess]   Tập test trong data/processed/ chỉ giữ lại {len(clean_test_stems)} ảnh sạch (100% độc lập).")
-    print(f"[preprocess]   Ghi danh sách test sạch : {clean_file}")
-    print(f"[preprocess]   Ghi danh sách rò rỉ     : {leak_file}")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ──────────────────────────────────────────────────────────────────────────────
 
 def _load_classes(class_table: Path) -> dict[int, str]:
     """Đọc configs/classes.csv → {class_id: name_vi}."""
@@ -361,197 +64,343 @@ def _load_classes(class_table: Path) -> dict[int, str]:
     return classes
 
 
-def _read_raw_labels(lbl_path: Path) -> list[tuple[int, float, float, float, float]]:
-    """Đọc file nhãn YOLO .txt. Trả về danh sách (class_id, cx, cy, w, h)."""
-    if not lbl_path.exists():
-        return []
-    boxes = []
-    with open(lbl_path, "r", encoding="utf-8") as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) < 5:
-                continue
-            try:
-                cid = int(parts[0])
-                cx, cy, bw, bh = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
-                boxes.append((cid, cx, cy, bw, bh))
-            except ValueError:
-                continue
-    return boxes
+
+def _letterbox_image(
+    img: np.ndarray,
+    target_size: tuple[int, int] = (640, 640),
+    pad_value: int = 114,
+) -> tuple[np.ndarray, float, float, float]:
+    """Resize giữ nguyên tỉ lệ khung hình và padding viền màu xám 114."""
+    th, tw = target_size
+    h, w = img.shape[:2]
+    scale = min(tw / w, th / h)
+    nw, nh = int(round(w * scale)), int(round(h * scale))
+
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    canvas = np.full((th, tw, 3), pad_value, dtype=np.uint8)
+
+    dx = (tw - nw) // 2
+    dy = (th - nh) // 2
+    canvas[dy : dy + nh, dx : dx + nw] = resized
+    return canvas, scale, float(dx), float(dy)
 
 
-def _letterbox(
-    img: "np.ndarray",
+def _adjust_boxes(
+    boxes: list[tuple[int, float, float, float, float]],
+    orig_w: int,
+    orig_h: int,
+    scale: float,
+    dx: float,
+    dy: float,
     target_w: int,
     target_h: int,
-    pad_value: int = 114,
-) -> tuple["np.ndarray", float, float, float]:
-    """Letterbox resize giữ nguyên tỉ lệ khung hình, bù padding màu pad_value.
+    min_box_px: int = 8,
+) -> tuple[list[tuple[int, float, float, float, float]], int]:
+    """Chuyển đổi toạ độ YOLO box sang canvas mới và loại bỏ các box < min_box_px."""
+    adjusted = []
+    dropped_tiny = 0
 
-    Returns:
-        (lb_img, scale, dw, dh)  – scale là hệ số co dãn, dw/dh là offset padding (pixels).
-    """
-    orig_h, orig_w = img.shape[:2]
-    scale = min(target_w / orig_w, target_h / orig_h)
-    new_w = round(orig_w * scale)
-    new_h = round(orig_h * scale)
-    img_resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    for cid, cx, cy, bw, bh in boxes:
+        abs_cx = cx * orig_w
+        abs_cy = cy * orig_h
+        abs_bw = bw * orig_w
+        abs_bh = bh * orig_h
 
-    dw = (target_w - new_w) / 2  # padding mỗi bên theo chiều ngang
-    dh = (target_h - new_h) / 2  # padding mỗi bên theo chiều dọc
+        new_cx = (abs_cx * scale + dx) / target_w
+        new_cy = (abs_cy * scale + dy) / target_h
+        new_bw = (abs_bw * scale) / target_w
+        new_bh = (abs_bh * scale) / target_h
 
-    top = round(dh - 0.1)
-    bottom = round(dh + 0.1)
-    left = round(dw - 0.1)
-    right = round(dw + 0.1)
+        px_w = new_bw * target_w
+        px_h = new_bh * target_h
+        if px_w < min_box_px or px_h < min_box_px:
+            dropped_tiny += 1
+            continue
 
-    lb_img = cv2.copyMakeBorder(
-        img_resized,
-        top, bottom, left, right,
-        cv2.BORDER_CONSTANT,
-        value=(pad_value, pad_value, pad_value),
-    )
-    # Đảm bảo kích thước đúng (rounding edge case)
-    lb_img = lb_img[:target_h, :target_w]
-    return lb_img, scale, dw, dh
+        x1 = max(0.0, new_cx - new_bw / 2)
+        y1 = max(0.0, new_cy - new_bh / 2)
+        x2 = min(1.0, new_cx + new_bw / 2)
+        y2 = min(1.0, new_cy + new_bh / 2)
+        if x2 <= x1 or y2 <= y1:
+            continue
 
+        final_cx = (x1 + x2) / 2
+        final_cy = (y1 + y2) / 2
+        final_bw = x2 - x1
+        final_bh = y2 - y1
 
-def _transform_box(
-    cx: float, cy: float, bw: float, bh: float,
-    orig_w: int, orig_h: int,
-    scale: float, dw: float, dh: float,
-    target_w: int, target_h: int,
-) -> tuple[float, float, float, float] | None:
-    """Chuyển đổi tọa độ box (normalized) sang tọa độ mới sau letterbox.
+        adjusted.append((cid, final_cx, final_cy, final_bw, final_bh))
 
-    Returns:
-        (cx_new, cy_new, w_new, h_new) tất cả normalized [0,1], hoặc None nếu box invalid.
-    """
-    # Pixel coords trong ảnh gốc
-    x1 = (cx - bw / 2) * orig_w
-    y1 = (cy - bh / 2) * orig_h
-    x2 = (cx + bw / 2) * orig_w
-    y2 = (cy + bh / 2) * orig_h
-
-    # Scale + offset
-    x1 = x1 * scale + dw
-    y1 = y1 * scale + dh
-    x2 = x2 * scale + dw
-    y2 = y2 * scale + dh
-
-    # Clip vào [0, target]
-    x1 = max(0.0, min(x1, target_w))
-    y1 = max(0.0, min(y1, target_h))
-    x2 = max(0.0, min(x2, target_w))
-    y2 = max(0.0, min(y2, target_h))
-
-    if x2 <= x1 or y2 <= y1:
-        return None
-
-    # Normalize
-    ncx = (x1 + x2) / 2 / target_w
-    ncy = (y1 + y2) / 2 / target_h
-    nw  = (x2 - x1) / target_w
-    nh  = (y2 - y1) / target_h
-
-    return ncx, ncy, nw, nh
-
-
-def _write_labels(dst: Path, boxes: list[tuple[int, float, float, float, float]]) -> None:
-    """Ghi file nhãn YOLO .txt."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with open(dst, "w", encoding="utf-8") as f:
-        for cid, cx, cy, bw, bh in boxes:
-            f.write(f"{cid} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
+    return adjusted, dropped_tiny
 
 
 def _write_data_yaml(out_root: Path, classes: dict[int, str]) -> None:
-    """Ghi data.yaml theo chuẩn Ultralytics YOLO."""
-    import yaml  # pyYAML
-    names = {i: classes[i] for i in sorted(classes.keys())}
-    data = {
-        "path": str(out_root),
-        "train": "images/train",
-        "val": "images/val",
-        "test": "images/test",
-        "nc": len(classes),
-        "names": names,
-    }
-    with open(out_root / "data.yaml", "w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
-
-
-def _find_split_file(split_dir: Path, sname: str) -> Path | None:
-    """Tìm file split phù hợp trong thư mục split_dataset/."""
-    candidates = [
-        split_dir / f"{sname}.txt",
-        split_dir / f"{sname}_files.txt",
-        split_dir / f"{sname}ing.txt",
-        split_dir / f"{sname}ing_files.txt",
+    """Sinh data.yaml chuẩn Ultralytics YOLO."""
+    names_dict = {cid: classes[cid] for cid in sorted(classes.keys())}
+    content = [
+        f"path: {out_root.resolve().as_posix()}",
+        "train: images/train",
+        "val: images/val",
+        "test: images/test",
+        "",
+        f"nc: {len(classes)}",
+        f"names: {json.dumps(names_dict, ensure_ascii=False)}",
+        "",
     ]
-    for c in candidates:
-        if c.exists():
-            return c
-    for f in split_dir.glob("*.txt"):
-        if sname.lower() in f.stem.lower():
-            return f
-    return None
+    with open(out_root / "data.yaml", "w", encoding="utf-8") as f:
+        f.write("\n".join(content))
 
 
-def _discover_splits(
-    data_root: Path,
-    img_paths: list[Path],
-    use_provided: bool,
-    ratios: dict[str, float],
-    rng: random.Random,
-) -> dict[str, list[str]]:
-    """Tìm / tạo phân chia train/val/test. Trả về {split: [stem, ...]}."""
-    stems_all = [p.stem for p in img_paths]
+def preprocess_dataset_offline(
+    data_root: str | Path,
+    out_root: str | Path = "data/processed",
+    class_table: str | Path = "configs/classes.csv",
+    image_size: tuple[int, int] = (640, 640),
+    min_box_px: int = 8,
+    pad_value: int = 114,
+    augment_minority: bool = True,
+    minority_target_boxes: int = 50,
+    ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
+    hash_size: int = 32,
+    hamming_thresh: int = 370,
+    seed: int = 42,
+) -> Path:
+    """Pipeline tiền xử lý offline: phân cụm toàn bộ ảnh thô và chia split theo cụm độc lập."""
+    data_root = Path(data_root)
+    out_root = Path(out_root)
+    class_table = Path(class_table)
 
-    # 1. Dùng split có sẵn trong split_dataset/
-    if use_provided:
-        split_dir = data_root / "split_dataset"
-        splits_found: dict[str, list[str]] = {}
+    print(f"[preprocess] data_root  : {data_root.resolve()}")
+    print(f"[preprocess] out_root   : {out_root.resolve()}")
+    print(f"[preprocess] target size: {image_size[0]}×{image_size[1]}")
+    print(f"[preprocess] min_box_px : {min_box_px}")
+    print(f"[preprocess] pad_value  : {pad_value}")
+
+    classes = _load_classes(class_table)
+    print(f"[preprocess] Số lớp     : {len(classes)}")
+
+    img_dir = data_root / "images"
+    lbl_dir = data_root / "labels"
+    if not img_dir.is_dir() or not lbl_dir.is_dir():
+        raise FileNotFoundError(f"Không tìm thấy images/ hoặc labels/ tại {data_root}")
+
+    all_img_paths = sorted(img_dir.glob("*.jpg"))
+    if not all_img_paths:
+        raise FileNotFoundError(f"Không tìm thấy ảnh *.jpg nào trong {img_dir}")
+    print(f"[preprocess] Tổng ảnh gốc: {len(all_img_paths):,}")
+
+    stem_to_imgpath = {p.stem: p for p in all_img_paths}
+    all_stems = sorted(stem_to_imgpath.keys())
+
+    # ── BƯỚC 1 & 2: Phân cụm dHash trực tiếp từ ảnh và chia split theo cụm (không dùng split có sẵn) ──
+    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 1: Phân cụm toàn bộ ảnh thô bằng dHash (size={hash_size}, Hamming <= {hamming_thresh})...")
+    print(f"[preprocess] BƯỚC 2: Phân chia các cụm vào Train, Val, Test theo tỉ lệ ({ratio[0]*100:.0f}/{ratio[1]*100:.0f}/{ratio[2]*100:.0f})...")
+    print("[preprocess]         QUY TẮC: Mọi ảnh trong cùng 1 cụm PHẢI thuộc cùng 1 tập (không chia rẽ cụm)!")
+    print("[preprocess] ========================================================")
+
+    splits = split_by_dhash_clusters(
+        img_paths=all_img_paths,
+        lbl_dir=lbl_dir,
+        ratio=ratio,
+        hash_size=hash_size,
+        hamming_thresh=hamming_thresh,
+        seed=seed,
+    )
+
+    # Kiểm tra an toàn: Đảm bảo các tập hoàn toàn không giao nhau (rời rạc tuyệt đối)
+    tr_set = set(splits["train"])
+    va_set = set(splits["val"])
+    te_set = set(splits["test"])
+    assert tr_set.isdisjoint(va_set), "LỖI: Có ảnh xuất hiện đồng thời trong Train và Val!"
+    assert tr_set.isdisjoint(te_set), "LỖI: Có ảnh xuất hiện đồng thời trong Train và Test!"
+    assert va_set.isdisjoint(te_set), "LỖI: Có ảnh xuất hiện đồng thời trong Val và Test!"
+    assert len(tr_set) + len(va_set) + len(te_set) == len(all_stems), "LỖI: Tổng số ảnh split không khớp tổng số ảnh gốc!"
+    print(f"[preprocess] Xác nhận phân tách hoàn tất: Train={len(tr_set):,}, Val={len(va_set):,}, Test={len(te_set):,} (100% độc lập cụm).")
+
+    # Lưu lại danh sách split vừa phân chia vào out_root (data/processed/), tuyệt đối không ghi vào data/raw
+    split_save_dir = out_root / "split_files"
+    split_save_dir.mkdir(parents=True, exist_ok=True)
+    for sname in ("train", "val", "test"):
+        lines = [f"{s}.jpg\n" for s in splits[sname]]
+        with open(split_save_dir / f"{sname}.txt", "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        with open(out_root / f"{sname}_files.txt", "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    # ── Xoá sạch thư mục đích để tránh file cũ còn sót lại ──
+    for sub in ("images", "labels"):
+        d = out_root / sub
+        if d.exists():
+            shutil.rmtree(d)
+        d.mkdir(parents=True, exist_ok=True)
         for sname in ("train", "val", "test"):
-            sf = _find_split_file(split_dir, sname)
-            if not sf:
-                continue
-            with open(sf, "r", encoding="utf-8") as fp:
-                lines = [l.strip() for l in fp if l.strip()]
-            stems_in_split = [Path(line).stem for line in lines]
-            valid = [s for s in stems_in_split if s in {p.stem for p in img_paths}]
-            if valid:
-                splits_found[sname] = valid
+            (d / sname).mkdir(parents=True, exist_ok=True)
 
-        if "train" in splits_found:
-            print(f"[preprocess] Dùng split có sẵn từ {split_dir}")
-            # Nếu thiếu val: trích xuất 15% từ train làm val để đủ 3 tập
-            if "val" not in splits_found:
-                tr = splits_found["train"]
-                n_val = max(1, round(len(tr) * ratios.get("val", 0.15)))
-                shuffled_tr = tr[:]
-                rng.shuffle(shuffled_tr)
-                splits_found["val"] = shuffled_tr[:n_val]
-                splits_found["train"] = shuffled_tr[n_val:]
-                print(f"[preprocess]   Tự động trích {n_val} ảnh từ train làm tập val để phục vụ validation.")
-
-            # Nếu thiếu test: trích xuất hoặc dùng val
-            if "test" not in splits_found:
-                splits_found["test"] = splits_found["val"]
-
-            return splits_found
-        print(f"[preprocess] Không tìm thấy split có sẵn trong {split_dir}, tự chia theo tỉ lệ.")
-
-    # 2. Tự chia ngẫu nhiên
-    shuffled = stems_all[:]
-    rng.shuffle(shuffled)
-    n = len(shuffled)
-    n_train = round(n * ratios.get("train", 0.7))
-    n_val = round(n * ratios.get("val", 0.15))
-
-    return {
-        "train": shuffled[:n_train],
-        "val": shuffled[n_train : n_train + n_val],
-        "test": shuffled[n_train + n_val :],
+    t0 = time.time()
+    meta: dict[str, Any] = {
+        "dataset_name": "VN-Traffic-Sign-Detection-Processed",
+        "source_data_root": str(data_root),
+        "target_image_size": list(image_size),
+        "min_box_px": min_box_px,
+        "pad_value": pad_value,
+        "num_classes": len(classes),
+        "splits": {},
+        "total_images_in": len(all_stems),
     }
 
+    total_kept = 0
+    total_dropped_tiny = 0
+
+    # ── Xử lý letterbox và lọc box nhỏ trên từng split ──
+    for sname, stems in splits.items():
+        dst_img_dir = out_root / "images" / sname
+        dst_lbl_dir = out_root / "labels" / sname
+
+        n_boxes_in = 0
+        n_boxes_out = 0
+        n_tiny_dropped = 0
+
+        for stem in stems:
+            src_img_p = stem_to_imgpath[stem]
+            src_lbl_p = lbl_dir / f"{stem}.txt"
+
+            raw_boxes = _read_raw_labels(src_lbl_p)
+            n_boxes_in += len(raw_boxes)
+
+            img = cv2.imread(str(src_img_p))
+            if img is None:
+                continue
+
+            orig_h, orig_w = img.shape[:2]
+            canvas, scale, dx, dy = _letterbox_image(img, image_size, pad_value)
+
+            adj_boxes, tiny_cnt = _adjust_boxes(
+                raw_boxes, orig_w, orig_h, scale, dx, dy, image_size[0], image_size[1], min_box_px
+            )
+            n_tiny_dropped += tiny_cnt
+            n_boxes_out += len(adj_boxes)
+
+            cv2.imwrite(str(dst_img_dir / f"{stem}.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            _write_labels(dst_lbl_dir / f"{stem}.txt", adj_boxes)
+
+        meta["splits"][sname] = {
+            "n_images": len(stems),
+            "n_boxes_in": n_boxes_in,
+            "n_boxes_out": n_boxes_out,
+            "n_tiny_dropped": n_tiny_dropped,
+        }
+        total_kept += n_boxes_out
+        total_dropped_tiny += n_tiny_dropped
+        print(f"[preprocess]   {sname}: {len(stems)} ảnh, {n_boxes_out}/{n_boxes_in} box giữ lại ({n_tiny_dropped} tiny bỏ)")
+
+    # ── Tăng cường dữ liệu cho các lớp thiểu số trong tập train (nếu bật) ──
+    if augment_minority and "train" in splits:
+        # Tiền tính toán mã dHash của val và test để kiểm tra rò rỉ trong quá trình sinh ảnh augmented
+        val_test_hashes = []
+        for s in ("val", "test"):
+            s_dir = out_root / "images" / s
+            for p in s_dir.glob("*.jpg"):
+                h = calculate_dhash(p, hash_size=32, strip_padding=True)
+                if h is not None:
+                    val_test_hashes.append(h)
+
+        val_test_packed = np.packbits(np.array(val_test_hashes, dtype=np.uint8), axis=1) if val_test_hashes else None
+
+        aug_stats = augment_minority_classes(
+            train_img_dir=out_root / "images" / "train",
+            train_lbl_dir=out_root / "labels" / "train",
+            val_test_packed=val_test_packed,
+            target_min_boxes=minority_target_boxes,
+            min_box_px=min_box_px,
+            seed=seed,
+        )
+        meta["splits"]["train"]["n_images"] += aug_stats["n_augmented_images"]
+        meta["splits"]["train"]["n_boxes_out"] += aug_stats["n_augmented_boxes"]
+        meta["minority_augmentation"] = aug_stats
+        total_kept += aug_stats["n_augmented_boxes"]
+
+    elapsed = time.time() - t0
+    meta["total_dropped_tiny"] = total_dropped_tiny
+    meta["total_boxes_kept"] = total_kept
+    meta["elapsed_seconds"] = round(elapsed, 2)
+
+    # ── Khảo sát rò rỉ dữ liệu Test vs Train và ghi test_clean_files.txt ──
+    train_stems_processed = [p.stem for p in (out_root / "images" / "train").glob("*.jpg")]
+    test_stems_processed = [p.stem for p in (out_root / "images" / "test").glob("*.jpg")]
+    proc_stem_to_path = {p.stem: p for p in out_root.glob("images/*/*.jpg")}
+
+    clean_test, leaked_test = find_leaked_test_stems(
+        train_stems=train_stems_processed,
+        test_stems=test_stems_processed,
+        stem_to_path=proc_stem_to_path,
+        hash_size=32,
+        hamming_thresh=370,
+    )
+
+    clean_file = out_root / "test_clean_files.txt"
+    leak_file = out_root / "test_leaked_files.txt"
+    with open(clean_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(clean_test) + "\n")
+    with open(leak_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(leaked_test) + "\n")
+
+    meta["leakage_analysis"] = {
+        "total_test": len(test_stems_processed),
+        "clean_test_count": len(clean_test),
+        "leaked_test_count": len(leaked_test),
+        "leaked_pct": round(len(leaked_test) / max(len(test_stems_processed), 1) * 100, 2),
+        "status": "PASSED" if not leaked_test else "LEAK_DETECTED",
+    }
+    print(f"[preprocess] Kiểm tra Data Leakage (dHash size=32, Hamming ≤ 370): {len(leaked_test)}/{len(test_stems_processed)} ảnh rò rỉ.")
+    print(f"[preprocess]   Ghi danh sách test sạch : {clean_file}")
+    print(f"[preprocess]   Ghi danh sách rò rỉ     : {leak_file}")
+
+    # ── Ghi data.yaml và meta.json ──
+    _write_data_yaml(out_root, classes)
+    print(f"[preprocess] data.yaml ghi tại: {out_root / 'data.yaml'}")
+
+    meta_path = out_root / "meta.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    print(f"[preprocess] meta.json ghi tại: {meta_path}")
+    print(f"[preprocess] Hoàn thành trong {elapsed:.1f}s  →  {out_root}")
+
+    return out_root
+
+
+def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Path:
+    """Wrapper chính nhận config dictionary từ tools/run_preprocess.py."""
+    prep = cfg.get("preprocess", {})
+    split_cfg = cfg.get("split", {})
+    ratios_dict = split_cfg.get("ratios", {"train": 0.70, "val": 0.15, "test": 0.15})
+    ratios = (
+        float(ratios_dict.get("train", 0.70)),
+        float(ratios_dict.get("val", 0.15)),
+        float(ratios_dict.get("test", 0.15)),
+    )
+    hash_sz = int(split_cfg.get("hash_size", 32))
+    h_thresh = int(split_cfg.get("hamming_threshold", 370))
+
+    d_root = data_root or prep.get("raw_dir", "data/raw")
+    out_root = prep.get("processed_dir", "data/processed")
+    target_size = tuple(prep.get("image_size", [640, 640]))
+    min_box_px = int(prep.get("min_box_px", 8))
+    pad_val = int(prep.get("pad_value", 114))
+    aug_min = bool(cfg.get("augment_minority", True))
+    aug_target = int(cfg.get("minority_target_boxes", 50))
+    seed = int(cfg.get("seed", 42))
+
+    return preprocess_dataset_offline(
+        data_root=d_root,
+        out_root=out_root,
+        image_size=target_size,
+        min_box_px=min_box_px,
+        pad_value=pad_val,
+        augment_minority=aug_min,
+        minority_target_boxes=aug_target,
+        ratio=ratios,
+        hash_size=hash_sz,
+        hamming_thresh=h_thresh,
+        seed=seed,
+    )
