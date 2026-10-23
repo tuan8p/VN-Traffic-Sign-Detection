@@ -1438,6 +1438,8 @@ def main(argv=None) -> None:
     p.add_argument("--min-box-px", type=int, default=8, help="Ngưỡng tiny box (default: 8)")
     p.add_argument("--num-samples", type=int, default=9, help="Số ảnh mẫu vẽ demo nhãn (default: 9)")
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
+    p.add_argument("--dhash-size", type=int, default=16, help="Kích thước cạnh dHash (default: 16 -> 256 bits, ví dụ 24 -> 576 bits, 32 -> 1024 bits)")
+    p.add_argument("--dhash-hamming", type=int, default=24, help="Ngưỡng khoảng cách Hamming để gom cụm (default: 24)")
     args = p.parse_args(argv)
 
     # Resolve data root
@@ -1519,10 +1521,10 @@ def main(argv=None) -> None:
         print("\n[EDA] 04 Box center heatmap...")
         plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
 
-        # ── 05. Phân tích gom cụm dHash tương đồng (size=16, hamming <= 24) ──
-        print(f"\n[EDA] 05 Phân tích gom cụm dHash tương đồng (size=16, hamming <= 24) trên {len(img_paths):,} ảnh gốc...")
+        # ── 05. Phân tích gom cụm dHash tương đồng (size={args.dhash_size}, hamming <= {args.dhash_hamming}) ──
+        print(f"\n[EDA] 05 Phân tích gom cụm dHash tương đồng (size={args.dhash_size}, hamming <= {args.dhash_hamming}) trên {len(img_paths):,} ảnh gốc...")
         cluster_res = analyze_and_plot_dhash_clusters(
-            img_paths, target_dir, hash_size=16, hamming_thresh=24, tag=tag, fig_num=5
+            img_paths, target_dir, hash_size=args.dhash_size, hamming_thresh=args.dhash_hamming, tag=tag, fig_num=5
         )
         summary_meta["clustering"] = cluster_res
 
