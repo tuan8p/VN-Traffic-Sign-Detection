@@ -562,85 +562,57 @@ def analyze_and_plot_dhash_clusters(
     n_multi_clusters = n_components - n_singletons
     n_multi_imgs = N - n_singletons
 
-    fig, axes = plt.subplots(1, 3, figsize=(19, 6.5))
+    sorted_clusters = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    multi_clusters = [c for c in sorted_clusters if c[1] >= 2]
+    singletons = [c for c in sorted_clusters if c[1] == 1]
+
+    fig, ax = plt.subplots(figsize=(18, 7.5))
     fig.suptitle(
-        f"{fig_num:02d}. Phân tích Gom Cụm dHash Tương đồng (dHash 256-bit, size={hash_size}, Hamming ≤ {hamming_thresh})\n"
-        f"Toàn bộ {N:,} ảnh ban đầu gom thành {n_components:,} cụm độc lập{' – ' + tag if tag else ''}",
-        fontsize=14, fontweight="bold", y=0.99
+        f"{fig_num:02d}. Thống Kê Số Lượng Ảnh Trong Từng Cụm (dHash size={hash_size}, Hamming ≤ {hamming_thresh})\n"
+        f"Toàn bộ {N:,} ảnh được gom thành {n_components:,} cụm (Có {n_multi_clusters:,} cụm đa ảnh và {n_singletons:,} cụm 1 ảnh){' – ' + tag if tag else ''}",
+        fontsize=14, fontweight="bold", y=0.98
     )
 
-    # 1. Bar chart: Phân bố kích thước cụm
-    ax0 = axes[0]
-    cluster_sizes = sorted(size_dist.keys())
-    n_clusters_per_size = [size_dist[sz] for sz in cluster_sizes]
-    bar_colors = ["#2A9D8F" if sz == 1 else "#E76F51" for sz in cluster_sizes]
+    n_display = min(len(multi_clusters), 40) if multi_clusters else min(len(sorted_clusters), 40)
+    display_clusters = multi_clusters[:n_display] if multi_clusters else sorted_clusters[:n_display]
 
-    bars = ax0.bar([str(sz) for sz in cluster_sizes], n_clusters_per_size, color=bar_colors, edgecolor="black", linewidth=0.5)
-    ax0.set_yscale("log")
-    ax0.set_ylim(0.5, max(n_clusters_per_size) * 3)
-    ax0.set_xlabel("Kích thước cụm (Số lượng ảnh trong 1 cụm)", fontsize=11, fontweight="bold")
-    ax0.set_ylabel("Số lượng cụm (Log scale)", fontsize=11, fontweight="bold")
-    ax0.set_title(f"1. Phân bố Kích thước Cụm ({n_components:,} cụm)", fontsize=12, fontweight="bold")
-    ax0.grid(axis="y", linestyle=":", alpha=0.5)
+    cluster_names = [f"Cụm #{cid}" for cid, sz in display_clusters]
+    cluster_sizes = [sz for cid, sz in display_clusters]
+    x_pos = np.arange(len(display_clusters))
 
-    for bar, sz, n_c in zip(bars, cluster_sizes, n_clusters_per_size):
+    bars = ax.bar(x_pos, cluster_sizes, color="#3A86FF", edgecolor="black", linewidth=0.6, alpha=0.85, width=0.7)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(cluster_names, rotation=60, ha="right", fontsize=9.5, fontweight="bold")
+    ax.set_ylabel("Số lượng ảnh trong cụm", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Các Cụm (Được sắp xếp giảm dần theo số lượng ảnh)", fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"Chi tiết {n_display} Cụm Đa Ảnh Lớn Nhất (Mỗi cột là 1 Cụm, chiều cao là số lượng ảnh trong cụm đó)",
+        fontsize=12, fontweight="bold", pad=12
+    )
+    ax.grid(axis="y", linestyle=":", alpha=0.6)
+
+    for bar, sz in zip(bars, cluster_sizes):
         h = bar.get_height()
-        n_imgs_sz = sz * n_c
-        rot = 35 if sz >= 8 else 0
-        txt = f"{n_c:,} cụm\n({n_imgs_sz:,} ảnh)" if sz < 8 else f"{n_c}c ({n_imgs_sz}a)"
-        ax0.annotate(
-            txt,
-            xy=(bar.get_x() + bar.get_width() / 2, h),
-            xytext=(0, 4), textcoords="offset points",
-            ha="center", va="bottom", fontsize=8.5, fontweight="bold",
-            rotation=rot,
-            color="#1D3557" if sz == 1 else "#E63946"
+        ax.text(
+            bar.get_x() + bar.get_width() / 2, h + max(cluster_sizes) * 0.015,
+            f"{sz}",
+            ha="center", va="bottom", fontsize=8.5, fontweight="bold", color="#1D3557"
         )
 
-    # 2. Donut chart: Tỷ lệ ảnh độc lập vs ảnh chuỗi lặp
-    ax1 = axes[1]
-    donut_vals = [n_singletons, n_multi_imgs]
-    donut_labels = [
-        f"Ảnh độc lập (Singletons)\n{n_singletons:,} ảnh ({n_singletons/N*100:.1f}%)",
-        f"Ảnh chuỗi trùng lặp (Near-dup)\n{n_multi_imgs:,} ảnh ({n_multi_imgs/N*100:.1f}%)"
-    ]
-    donut_colors = ["#2A9D8F", "#E63946"]
-    wedges, texts, autotexts = ax1.pie(
-        donut_vals, labels=donut_labels, colors=donut_colors,
-        autopct="%1.1f%%", pctdistance=0.75, startangle=140,
-        wedgeprops=dict(width=0.42, edgecolor="white", linewidth=2),
-        textprops=dict(fontsize=10.5, fontweight="bold")
+    ax.set_ylim(0, max(cluster_sizes) * 1.15)
+
+    info_text = (
+        f"Tổng số cụm: {n_components:,} cụm\n"
+        f"• Cụm đa ảnh (≥ 2 ảnh): {n_multi_clusters:,} cụm (gồm {n_multi_imgs:,} ảnh)\n"
+        f"• Cụm đơn lẻ (1 ảnh): {n_singletons:,} cụm (mỗi cụm 1 ảnh)\n"
+        f"• Cụm nhiều ảnh nhất: {sorted_clusters[0][1]} ảnh (Cụm #{sorted_clusters[0][0]})"
     )
-    for at in autotexts:
-        at.set_color("white")
-        at.set_fontsize(11)
-        at.set_weight("bold")
-    ax1.set_title("2. Tỷ lệ Phân bố Ảnh theo Cụm", fontsize=12, fontweight="bold")
-    ax1.text(0, 0, f"Tổng cộng\n{N:,} ảnh\n({n_components:,} cụm)", ha="center", va="center",
-             fontsize=11.5, fontweight="bold", color="#1D3557")
-
-    # 3. Horizontal bar chart: Top 10 cụm lớn nhất
-    ax2 = axes[2]
-    top_10 = counts.most_common(10)
-    top_c_ids = [f"Cụm #{cid}" for cid, c_sz in top_10]
-    top_c_sizes = [c_sz for cid, c_sz in top_10]
-    y_pos = np.arange(len(top_10))
-
-    bars_h = ax2.barh(y_pos, top_c_sizes, color="#3A86FF", edgecolor="black", linewidth=0.5, alpha=0.85)
-    ax2.set_yticks(y_pos)
-    ax2.set_yticklabels(top_c_ids, fontsize=10, fontweight="bold")
-    ax2.invert_yaxis()
-    ax2.set_xlabel("Số lượng ảnh trong chuỗi video", fontsize=11, fontweight="bold")
-    ax2.set_title("3. Top 10 Cụm Lớn nhất (Chuỗi Dashcam liên tiếp)", fontsize=12, fontweight="bold")
-    ax2.grid(axis="x", linestyle=":", alpha=0.5)
-
-    for bar_h, c_sz in zip(bars_h, top_c_sizes):
-        ax2.text(
-            bar_h.get_width() + 0.15, bar_h.get_y() + bar_h.get_height() / 2,
-            f"{c_sz} ảnh",
-            va="center", fontsize=9.5, fontweight="bold", color="#1D3557"
-        )
-    ax2.set_xlim(0, max(top_c_sizes) + 1.8)
+    ax.text(
+        0.98, 0.95, info_text, transform=ax.transAxes,
+        fontsize=11, fontweight="bold", va="top", ha="right",
+        bbox=dict(boxstyle="round,pad=0.6", facecolor="#F8F9FA", edgecolor="#2A9D8F", linewidth=1.5)
+    )
 
     # Footer banner
     banner = (
@@ -649,7 +621,7 @@ def analyze_and_plot_dhash_clusters(
     )
     fig.text(0.5, 0.02, banner, ha="center", fontsize=10.5, fontweight="bold", color="#1D3557")
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    plt.tight_layout(rect=[0, 0.04, 1, 0.94])
     fname = out_dir / f"{fig_num:02d}_dhash_clusters.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
@@ -671,7 +643,7 @@ def analyze_and_plot_dhash_clusters(
         "multi_image_pct": round(float(n_multi_imgs / N * 100), 2),
         "max_cluster_size": max(sizes),
         "cluster_size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
-        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in top_10],
+        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in sorted_clusters[:10]],
         "stem_to_cluster": {st: int(lbl) for st, lbl in zip(valid_stems, labels)},
     }
     try:
@@ -694,7 +666,7 @@ def analyze_and_plot_dhash_clusters(
         "multi_image_pct": round(float(n_multi_imgs / N * 100), 2),
         "max_cluster_size": max(sizes),
         "cluster_size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
-        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in top_10],
+        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in sorted_clusters[:10]],
     }
 
 
