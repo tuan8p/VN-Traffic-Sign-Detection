@@ -24,6 +24,8 @@ def main(argv=None) -> None:
     p.add_argument("--data-root", required=True, help="Thư mục gốc dataset thô (chứa images/ và labels/)")
     p.add_argument("--shared", default="configs/shared.yaml", help="Đường dẫn shared.yaml")
     p.add_argument("--pipeline", default=None, help="Pipeline yaml để merge (tùy chọn)")
+    p.add_argument("--dhash-size", type=int, default=None, help="Kích thước dHash (mặc định lấy từ shared.yaml: 32)")
+    p.add_argument("--dhash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming gom cụm (mặc định lấy từ shared.yaml: 370)")
     args = p.parse_args(argv)
 
     cfg = resolve_config(
@@ -31,9 +33,16 @@ def main(argv=None) -> None:
         shared_yaml=args.shared,
     )
 
-    print(f"[run_preprocess] data_root  : {args.data_root}")
-    print(f"[run_preprocess] image_size : {cfg.get('preprocess', {}).get('image_size')}")
-    print(f"[run_preprocess] min_box_px : {cfg.get('preprocess', {}).get('min_box_px')}")
+    if args.dhash_size is not None:
+        cfg.setdefault("split", {})["hash_size"] = args.dhash_size
+    if args.dhash_hamming is not None:
+        cfg.setdefault("split", {})["hamming_threshold"] = args.dhash_hamming
+
+    print(f"[run_preprocess] data_root     : {args.data_root}")
+    print(f"[run_preprocess] image_size    : {cfg.get('preprocess', {}).get('image_size')}")
+    print(f"[run_preprocess] min_box_px    : {cfg.get('preprocess', {}).get('min_box_px')}")
+    print(f"[run_preprocess] dhash_size    : {cfg.get('split', {}).get('hash_size', 32)}")
+    print(f"[run_preprocess] dhash_hamming : {cfg.get('split', {}).get('hamming_threshold', 370)}")
 
     out = run_offline(cfg, args.data_root)
     print(f"[run_preprocess] Processed cache sẵn sàng tại: {out}")
