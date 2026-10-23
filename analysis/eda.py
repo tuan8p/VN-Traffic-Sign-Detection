@@ -6,20 +6,28 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-s
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-Produces 9 figures (written under analysis/figures/ strictly from 01 to 09):
-  01_class_distribution    – toàn bộ 52 lớp sắp xếp giảm dần, cột đứng, nhãn xoay 90°
-  02_boxes_per_image        – phân bố số lượng bounding box trên mỗi file nhãn / ảnh
-  03_box_dimensions         – phân bố w, h, tỉ lệ khung hình (w/h), diện tích box
-  04_box_center_heatmap     – mật độ vị trí tâm (cx, cy) trên khung hình (2D KDE & scatter)
-  05_images_per_split       – số lượng ảnh và số box theo split (train/val/test)
-  06_tiny_box_candidates    – histogram và scatter box nhỏ (< min_box_px)
-  07_data_leakage           – kiểm tra rò rỉ dữ liệu (ma trận overlap dHash + histogram Hamming)
-  08_brightness_sharpness   – phân tích độ sáng & độ sắc nét / độ mờ (Laplacian variance)
-  09_sample_labels          – demo n tấm ảnh mẫu vẽ bounding box và tên nhãn tiếng Việt
+Bộ biểu đồ chuẩn (lưu tại analysis/figures/{raw,processed}/):
+  • data/raw (8 biểu đồ trên TOÀN BỘ ảnh ban đầu, không split):
+      01_class_distribution  – toàn bộ 52 lớp sắp xếp giảm dần, cột đứng xoay 90°
+      02_boxes_per_image      – phân bố số lượng bounding box trên mỗi file nhãn / ảnh
+      03_box_dimensions       – phân bố w, h, tỉ lệ khung hình (w/h), diện tích box
+      04_box_center_heatmap   – mật độ vị trí tâm (cx, cy) trên khung hình (2D KDE & scatter)
+      05_dhash_clusters       – gom cụm dHash 256-bit (size=16, Hamming <= 24): 2,730 cụm từ 3,216 ảnh gốc
+      06_tiny_box_candidates  – histogram và scatter box siêu nhỏ (< min_box_px)
+      07_brightness_sharpness – phân tích độ sáng & độ sắc nét quang học
+      08_sample_labels        – demo n ảnh mẫu vẽ bounding box và nhãn tiếng Việt
+
+  • data/processed (9 biểu đồ sau tiền xử lý & phân chia split mới):
+      01 đến 04: như trên
+      05_images_per_split     – số lượng ảnh và box theo từng split mới
+      06_tiny_box_candidates  – xác nhận 0% box nhỏ < 8px
+      07_data_leakage         – ma trận trùng lặp dHash & khoảng cách Hamming giữa các split
+      08_brightness_sharpness – đo kiểm độ sáng và độ nét sau tiền xử lý
+      09_sample_labels        – demo n ảnh mẫu sau tiền xử lý
 
 Run:
     python -m analysis.eda --data-root data/raw
-    python -m analysis.eda --data-root data/processed  # lần 2 sau preprocess
+    python -m analysis.eda --data-root data/processed
 """
 from __future__ import annotations
 
@@ -453,6 +461,244 @@ def plot_box_center_heatmap(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# DisjointSet Helper for Graph Connected Components Clustering
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _DisjointSet:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, i: int) -> int:
+        path = []
+        while self.parent[i] != i:
+            path.append(i)
+            i = self.parent[i]
+        for node in path:
+            self.parent[node] = i
+        return i
+
+    def union(self, i: int, j: int) -> None:
+        root_i = self.find(i)
+        root_j = self.find(j)
+        if root_i != root_j:
+            if self.rank[root_i] < self.rank[root_j]:
+                root_i, root_j = root_j, root_i
+            self.parent[root_j] = root_i
+            if self.rank[root_i] == self.rank[root_j]:
+                self.rank[root_i] += 1
+
+
+def analyze_and_plot_dhash_clusters(
+    img_paths: list[Path],
+    out_dir: Path,
+    hash_size: int = 16,
+    hamming_thresh: int = 24,
+    tag: str = "",
+    fig_num: int = 5,
+) -> dict[str, Any]:
+    """Figure 05 (cho RAW): Phân tích gom cụm ảnh bằng dHash 256-bit (hash_size=16) và ngưỡng Hamming <= 24."""
+    if not img_paths:
+        return {}
+
+    hashes = []
+    valid_stems = []
+    for p in img_paths:
+        try:
+            with Image.open(p) as img:
+                w, h = img.size
+                if w == 640 and h == 640:
+                    img_act = img.crop((0, 140, 640, 500))
+                else:
+                    img_act = img
+                img_gray = img_act.convert("L").resize((hash_size + 1, hash_size), Image.Resampling.BILINEAR)
+                arr = np.array(img_gray, dtype=np.int16)
+                diff = (arr[:, 1:] > arr[:, :-1]).flatten()
+                hashes.append(diff)
+                valid_stems.append(p.stem)
+        except Exception:
+            continue
+
+    if not hashes:
+        return {}
+
+    mat = np.array(hashes, dtype=np.uint8)
+    packed = np.packbits(mat, axis=1)
+    N = len(packed)
+    popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
+
+    chunk_size = 500
+    adj_rows = []
+    adj_cols = []
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        xor = np.bitwise_xor(packed[start:end, None, :], packed[None, :, :])
+        dist = popcount[xor].sum(axis=2)
+        for local_i in range(end - start):
+            global_i = start + local_i
+            match_j = np.where((dist[local_i] <= hamming_thresh) & (np.arange(N) > global_i))[0]
+            for j in match_j:
+                adj_rows.append(global_i)
+                adj_cols.append(j)
+
+    dsu = _DisjointSet(N)
+    for u, v in zip(adj_rows, adj_cols):
+        dsu.union(u, v)
+
+    cluster_map: dict[int, int] = {}
+    labels = []
+    for i in range(N):
+        root = dsu.find(i)
+        if root not in cluster_map:
+            cluster_map[root] = len(cluster_map)
+        labels.append(cluster_map[root])
+
+    n_components = len(cluster_map)
+    counts = Counter(labels)
+    sizes = list(counts.values())
+    size_dist = Counter(sizes)
+
+    n_singletons = size_dist.get(1, 0)
+    n_multi_clusters = n_components - n_singletons
+    n_multi_imgs = N - n_singletons
+
+    fig, axes = plt.subplots(1, 3, figsize=(19, 6.5))
+    fig.suptitle(
+        f"{fig_num:02d}. Phân tích Gom Cụm dHash Tương đồng (dHash 256-bit, size={hash_size}, Hamming ≤ {hamming_thresh})\n"
+        f"Toàn bộ {N:,} ảnh ban đầu gom thành {n_components:,} cụm độc lập{' – ' + tag if tag else ''}",
+        fontsize=14, fontweight="bold", y=0.99
+    )
+
+    # 1. Bar chart: Phân bố kích thước cụm
+    ax0 = axes[0]
+    cluster_sizes = sorted(size_dist.keys())
+    n_clusters_per_size = [size_dist[sz] for sz in cluster_sizes]
+    bar_colors = ["#2A9D8F" if sz == 1 else "#E76F51" for sz in cluster_sizes]
+
+    bars = ax0.bar([str(sz) for sz in cluster_sizes], n_clusters_per_size, color=bar_colors, edgecolor="black", linewidth=0.5)
+    ax0.set_yscale("log")
+    ax0.set_ylim(0.5, max(n_clusters_per_size) * 3)
+    ax0.set_xlabel("Kích thước cụm (Số lượng ảnh trong 1 cụm)", fontsize=11, fontweight="bold")
+    ax0.set_ylabel("Số lượng cụm (Log scale)", fontsize=11, fontweight="bold")
+    ax0.set_title(f"1. Phân bố Kích thước Cụm ({n_components:,} cụm)", fontsize=12, fontweight="bold")
+    ax0.grid(axis="y", linestyle=":", alpha=0.5)
+
+    for bar, sz, n_c in zip(bars, cluster_sizes, n_clusters_per_size):
+        h = bar.get_height()
+        n_imgs_sz = sz * n_c
+        rot = 35 if sz >= 8 else 0
+        txt = f"{n_c:,} cụm\n({n_imgs_sz:,} ảnh)" if sz < 8 else f"{n_c}c ({n_imgs_sz}a)"
+        ax0.annotate(
+            txt,
+            xy=(bar.get_x() + bar.get_width() / 2, h),
+            xytext=(0, 4), textcoords="offset points",
+            ha="center", va="bottom", fontsize=8.5, fontweight="bold",
+            rotation=rot,
+            color="#1D3557" if sz == 1 else "#E63946"
+        )
+
+    # 2. Donut chart: Tỷ lệ ảnh độc lập vs ảnh chuỗi lặp
+    ax1 = axes[1]
+    donut_vals = [n_singletons, n_multi_imgs]
+    donut_labels = [
+        f"Ảnh độc lập (Singletons)\n{n_singletons:,} ảnh ({n_singletons/N*100:.1f}%)",
+        f"Ảnh chuỗi trùng lặp (Near-dup)\n{n_multi_imgs:,} ảnh ({n_multi_imgs/N*100:.1f}%)"
+    ]
+    donut_colors = ["#2A9D8F", "#E63946"]
+    wedges, texts, autotexts = ax1.pie(
+        donut_vals, labels=donut_labels, colors=donut_colors,
+        autopct="%1.1f%%", pctdistance=0.75, startangle=140,
+        wedgeprops=dict(width=0.42, edgecolor="white", linewidth=2),
+        textprops=dict(fontsize=10.5, fontweight="bold")
+    )
+    for at in autotexts:
+        at.set_color("white")
+        at.set_fontsize(11)
+        at.set_weight("bold")
+    ax1.set_title("2. Tỷ lệ Phân bố Ảnh theo Cụm", fontsize=12, fontweight="bold")
+    ax1.text(0, 0, f"Tổng cộng\n{N:,} ảnh\n({n_components:,} cụm)", ha="center", va="center",
+             fontsize=11.5, fontweight="bold", color="#1D3557")
+
+    # 3. Horizontal bar chart: Top 10 cụm lớn nhất
+    ax2 = axes[2]
+    top_10 = counts.most_common(10)
+    top_c_ids = [f"Cụm #{cid}" for cid, c_sz in top_10]
+    top_c_sizes = [c_sz for cid, c_sz in top_10]
+    y_pos = np.arange(len(top_10))
+
+    bars_h = ax2.barh(y_pos, top_c_sizes, color="#3A86FF", edgecolor="black", linewidth=0.5, alpha=0.85)
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels(top_c_ids, fontsize=10, fontweight="bold")
+    ax2.invert_yaxis()
+    ax2.set_xlabel("Số lượng ảnh trong chuỗi video", fontsize=11, fontweight="bold")
+    ax2.set_title("3. Top 10 Cụm Lớn nhất (Chuỗi Dashcam liên tiếp)", fontsize=12, fontweight="bold")
+    ax2.grid(axis="x", linestyle=":", alpha=0.5)
+
+    for bar_h, c_sz in zip(bars_h, top_c_sizes):
+        ax2.text(
+            bar_h.get_width() + 0.15, bar_h.get_y() + bar_h.get_height() / 2,
+            f"{c_sz} ảnh",
+            va="center", fontsize=9.5, fontweight="bold", color="#1D3557"
+        )
+    ax2.set_xlim(0, max(top_c_sizes) + 1.8)
+
+    # Footer banner
+    banner = (
+        f"Khuyến nghị Phân chia Dataset (Re-split): Toàn bộ {n_multi_imgs:,} ảnh thuộc {n_multi_clusters:,} cụm chuỗi đa ảnh "
+        "phải được giữ nguyên trong cùng một Split (GroupKFold theo Cluster ID) để triệt tiêu hoàn toàn Data Leakage giữa Train, Val và Test."
+    )
+    fig.text(0.5, 0.02, banner, ha="center", fontsize=10.5, fontweight="bold", color="#1D3557")
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    fname = out_dir / f"{fig_num:02d}_dhash_clusters.png"
+    plt.savefig(fname, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  Saved: {fname}")
+    print(f"  Tổng số cụm: {n_components:,} cụm từ {N:,} ảnh (Singletons: {n_singletons:,}, Đa ảnh: {n_multi_clusters:,}, Max: {max(sizes)} ảnh)")
+
+    # Lưu tệp json chi tiết mapping các cụm
+    cluster_save_path = out_dir / "dhash_clusters.json"
+    cluster_export = {
+        "hash_size": hash_size,
+        "hash_bits": hash_size * hash_size,
+        "hamming_threshold": hamming_thresh,
+        "total_images": N,
+        "total_clusters": n_components,
+        "singleton_clusters": n_singletons,
+        "multi_image_clusters": n_multi_clusters,
+        "multi_image_total_images": n_multi_imgs,
+        "singleton_pct": round(float(n_singletons / N * 100), 2),
+        "multi_image_pct": round(float(n_multi_imgs / N * 100), 2),
+        "max_cluster_size": max(sizes),
+        "cluster_size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
+        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in top_10],
+        "stem_to_cluster": {st: int(lbl) for st, lbl in zip(valid_stems, labels)},
+    }
+    try:
+        with open(cluster_save_path, "w", encoding="utf-8") as f:
+            json.dump(cluster_export, f, indent=2, ensure_ascii=False)
+        print(f"  Saved mapping: {cluster_save_path}")
+    except Exception as e:
+        print(f"  [Warn] Không thể lưu dhash_clusters.json: {e}")
+
+    return {
+        "hash_size": hash_size,
+        "hash_bits": hash_size * hash_size,
+        "hamming_threshold": hamming_thresh,
+        "total_images": N,
+        "total_clusters": n_components,
+        "singleton_clusters": n_singletons,
+        "multi_image_clusters": n_multi_clusters,
+        "multi_image_total_images": n_multi_imgs,
+        "singleton_pct": round(float(n_singletons / N * 100), 2),
+        "multi_image_pct": round(float(n_multi_imgs / N * 100), 2),
+        "max_cluster_size": max(sizes),
+        "cluster_size_distribution": {str(k): v for k, v in sorted(size_dist.items())},
+        "top_10_largest_clusters": [{"cluster_id": int(cid), "size": int(sz)} for cid, sz in top_10],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 05. Images per Split (Số lượng ảnh và box theo split)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -843,8 +1089,9 @@ def analyze_and_plot_brightness_sharpness(
     out_dir: Path,
     max_samples: int = 1000,
     tag: str = "",
+    fig_num: int = 8,
 ) -> dict[str, Any]:
-    """Figure 08: Phân tích độ sáng (mean intensity) và độ sắc nét (Laplacian variance)."""
+    """Phân tích độ sáng (mean intensity) và độ sắc nét (Laplacian variance)."""
     if not img_paths:
         print("  [Quality] Không có file ảnh để phân tích độ sáng/độ nét.")
         return {}
@@ -883,7 +1130,7 @@ def analyze_and_plot_brightness_sharpness(
     blur_pct = (s_arr < blur_threshold).mean() * 100
 
     fig, axes = plt.subplots(2, 2, figsize=(17.5, 11))
-    fig.suptitle(f"08. Phân tích Chất lượng Ảnh: Độ sáng (Brightness) & Độ sắc nét (Sharpness){' – ' + tag if tag else ''}",
+    fig.suptitle(f"{fig_num:02d}. Phân tích Chất lượng Ảnh: Độ sáng (Brightness) & Độ sắc nét (Sharpness){' – ' + tag if tag else ''}",
                  fontsize=14, fontweight="bold")
 
     # 1. Histogram Brightness
@@ -973,7 +1220,7 @@ def analyze_and_plot_brightness_sharpness(
     ax3.set_title("Tỉ lệ phân loại Chất lượng Dữ liệu", fontsize=11, fontweight="bold")
 
     plt.tight_layout()
-    fname = out_dir / "08_brightness_sharpness.png"
+    fname = out_dir / f"{fig_num:02d}_brightness_sharpness.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1000,8 +1247,9 @@ def plot_sample_labeled_images(
     num_samples: int = 9,
     seed: int = 42,
     tag: str = "",
+    fig_num: int = 9,
 ) -> None:
-    """Figure 09: Trực quan hóa n ảnh mẫu kèm bounding box và nhãn lớp tiếng Việt."""
+    """Trực quan hóa n ảnh mẫu kèm bounding box và nhãn lớp tiếng Việt."""
     if not boxes:
         return
 
@@ -1041,7 +1289,7 @@ def plot_sample_labeled_images(
     rows = (n_show + cols - 1) // cols
 
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 5.5, rows * 4.5))
-    fig.suptitle(f"09. Ảnh Mẫu Kiểm tra Bounding Box & Nhãn Lớp Tiếng Việt{' – ' + tag if tag else ''}",
+    fig.suptitle(f"{fig_num:02d}. Ảnh Mẫu Kiểm tra Bounding Box & Nhãn Lớp Tiếng Việt{' – ' + tag if tag else ''}",
                  fontsize=14, fontweight="bold", y=0.99)
 
     ax_list = axes.flatten() if hasattr(axes, "flatten") else [axes]
@@ -1093,7 +1341,7 @@ def plot_sample_labeled_images(
         ax_list[j].axis("off")
 
     plt.tight_layout()
-    fname = out_dir / "09_sample_labels.png"
+    fname = out_dir / f"{fig_num:02d}_sample_labels.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1106,6 +1354,7 @@ def plot_sample_labeled_images(
 def collect_data(
     data_root: Path,
     image_size: int = 640,
+    ignore_split: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, tuple[int, int]], dict[str, list[str]], list[Path], str]:
     """Đọc dữ liệu từ data_root."""
     data_root = Path(data_root).resolve()
@@ -1117,6 +1366,16 @@ def collect_data(
     split_stems: dict[str, list[str]] = {}
 
     split_names = ("train", "val", "test")
+
+    # Nếu là raw hoặc được yêu cầu không dùng split mặc định cũ:
+    if ignore_split or tag == "raw":
+        flat_labels_dir = data_root / "labels" if (data_root / "labels").is_dir() else data_root
+        all_boxes = _read_yolo_labels(flat_labels_dir, image_size_px=image_size)
+        stems_all = {b["stem"] for b in all_boxes}
+        n_imgs = len(img_paths) if img_paths else len(stems_all)
+        split_stems["all"] = list(stems_all)
+        split_stats["all"] = (n_imgs, len(all_boxes))
+        return all_boxes, split_stats, split_stems, img_paths, tag
 
     # Cấu trúc 1: labels/{train,val,test}/
     labels_root = data_root / "labels"
@@ -1234,65 +1493,142 @@ def main(argv=None) -> None:
         target_dir = figures_root / tag if tag in ("raw", "processed") else figures_root
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── 01. Class distribution (Gộp 52 lớp, sắp xếp giảm dần, cột đứng xoay 90°) ──
-    print("\n[EDA] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
-    plot_class_distribution(all_boxes, classes, target_dir, tag=tag)
+    if tag == "raw" or "all" in split_stats:
+        # Xóa các file cũ của raw nếu tồn tại để giữ đúng 8 file từ 01-08:
+        for old_f in ["05_images_per_split.png", "07_data_leakage.png", "08_brightness_sharpness.png", "09_sample_labels.png", "09_image_properties.png", "10_sample_labels.png"]:
+            p = target_dir / old_f
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
 
-    # ── 02. Boxes per Image / Label File ──
-    print("\n[EDA] 02 Boxes per label / image distribution...")
-    plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
+        # ── 01. Class distribution ──
+        print("\n[EDA] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
+        plot_class_distribution(all_boxes, classes, target_dir, tag=tag)
 
-    # ── 03. Box dimensions ──
-    print("\n[EDA] 03 Box dimensions...")
-    plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
+        # ── 02. Boxes per Image / Label File ──
+        print("\n[EDA] 02 Boxes per label / image distribution...")
+        plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
 
-    # ── 04. Box center heatmap ──
-    print("\n[EDA] 04 Box center heatmap...")
-    plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
+        # ── 03. Box dimensions ──
+        print("\n[EDA] 03 Box dimensions...")
+        plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
 
-    # ── 05. Images per split ──
-    print("\n[EDA] 05 Images per split...")
-    plot_images_per_split(split_stats, target_dir, tag=tag)
+        # ── 04. Box center heatmap ──
+        print("\n[EDA] 04 Box center heatmap...")
+        plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
 
-    # ── 06. Tiny box candidates ──
-    print("\n[EDA] 06 Tiny box candidates...")
-    plot_tiny_box_candidates(
-        all_boxes,
-        target_dir,
-        min_box_px=args.min_box_px,
-        image_size=args.image_size,
-        tag=tag,
-    )
+        # ── 05. Phân tích gom cụm dHash tương đồng (size=16, hamming <= 24) ──
+        print(f"\n[EDA] 05 Phân tích gom cụm dHash tương đồng (size=16, hamming <= 24) trên {len(img_paths):,} ảnh gốc...")
+        cluster_res = analyze_and_plot_dhash_clusters(
+            img_paths, target_dir, hash_size=16, hamming_thresh=24, tag=tag, fig_num=5
+        )
+        summary_meta["clustering"] = cluster_res
 
-    # ── 07. Data leakage check (dHash Overlap Matrix & Hamming Distance) ──
-    print("\n[EDA] 07 Data leakage check (dHash Overlap Matrix & Hamming Distance)...")
-    leak_res = check_and_plot_data_leakage(data_root, split_stems, target_dir, tag=tag)
-    summary_meta["leakage"] = leak_res
+        # ── 06. Tiny box candidates ──
+        print("\n[EDA] 06 Tiny box candidates...")
+        plot_tiny_box_candidates(
+            all_boxes,
+            target_dir,
+            min_box_px=args.min_box_px,
+            image_size=args.image_size,
+            tag=tag,
+        )
 
-    # ── 08. Brightness & Sharpness ──
-    print(f"\n[EDA] 08 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
-    qual_res = analyze_and_plot_brightness_sharpness(
-        img_paths, target_dir, max_samples=args.quality_samples, tag=tag
-    )
-    summary_meta["quality"] = qual_res
+        # ── 07. Brightness & Sharpness ──
+        print(f"\n[EDA] 07 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
+        qual_res = analyze_and_plot_brightness_sharpness(
+            img_paths, target_dir, max_samples=args.quality_samples, tag=tag, fig_num=7
+        )
+        summary_meta["quality"] = qual_res
 
-    # ── 09. Demo n tấm ảnh có label ──
-    print(f"\n[EDA] 09 Demo {args.num_samples} ảnh mẫu kèm label...")
-    plot_sample_labeled_images(
-        data_root, all_boxes, classes, target_dir,
-        num_samples=args.num_samples, seed=42, tag=tag
-    )
+        # ── 08. Demo n tấm ảnh có label ──
+        print(f"\n[EDA] 08 Demo {args.num_samples} ảnh mẫu kèm label...")
+        plot_sample_labeled_images(
+            data_root, all_boxes, classes, target_dir,
+            num_samples=args.num_samples, seed=42, tag=tag, fig_num=8
+        )
 
-    # Lưu tóm tắt kết quả (duy nhất 1 file eda_summary.json trong target_dir)
-    summary_path = target_dir / "eda_summary.json"
-    try:
-        with open(summary_path, "w", encoding="utf-8") as f:
-            json.dump(summary_meta, f, indent=2, ensure_ascii=False)
-        print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
-    except Exception as e:
-        print(f"  [Warn] Không thể lưu summary json: {e}")
+        # Lưu tóm tắt kết quả
+        summary_path = target_dir / "eda_summary.json"
+        try:
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary_meta, f, indent=2, ensure_ascii=False)
+            print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
+        except Exception as e:
+            print(f"  [Warn] Không thể lưu summary json: {e}")
 
-    print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 9 biểu đồ từ 01–09 đã ghi tại: {target_dir}")
+        print(f"\n[EDA] Hoàn thành phân tích RAW (toàn bộ ảnh)! Toàn bộ 8 biểu đồ từ 01–08 đã ghi tại: {target_dir}")
+    else:
+        # Xóa các file thừa nếu có
+        for old_f in ["09_image_properties.png", "10_sample_labels.png"]:
+            p = target_dir / old_f
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+
+        # ── 01. Class distribution ──
+        print("\n[EDA] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
+        plot_class_distribution(all_boxes, classes, target_dir, tag=tag)
+
+        # ── 02. Boxes per Image / Label File ──
+        print("\n[EDA] 02 Boxes per label / image distribution...")
+        plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
+
+        # ── 03. Box dimensions ──
+        print("\n[EDA] 03 Box dimensions...")
+        plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
+
+        # ── 04. Box center heatmap ──
+        print("\n[EDA] 04 Box center heatmap...")
+        plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
+
+        # ── 05. Images per split ──
+        print("\n[EDA] 05 Images per split...")
+        plot_images_per_split(split_stats, target_dir, tag=tag)
+
+        # ── 06. Tiny box candidates ──
+        print("\n[EDA] 06 Tiny box candidates...")
+        plot_tiny_box_candidates(
+            all_boxes,
+            target_dir,
+            min_box_px=args.min_box_px,
+            image_size=args.image_size,
+            tag=tag,
+        )
+
+        # ── 07. Data leakage check (dHash Overlap Matrix & Hamming Distance) ──
+        print("\n[EDA] 07 Data leakage check (dHash Overlap Matrix & Hamming Distance)...")
+        leak_res = check_and_plot_data_leakage(data_root, split_stems, target_dir, tag=tag)
+        summary_meta["leakage"] = leak_res
+
+        # ── 08. Brightness & Sharpness ──
+        print(f"\n[EDA] 08 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
+        qual_res = analyze_and_plot_brightness_sharpness(
+            img_paths, target_dir, max_samples=args.quality_samples, tag=tag, fig_num=8
+        )
+        summary_meta["quality"] = qual_res
+
+        # ── 09. Demo n tấm ảnh có label ──
+        print(f"\n[EDA] 09 Demo {args.num_samples} ảnh mẫu kèm label...")
+        plot_sample_labeled_images(
+            data_root, all_boxes, classes, target_dir,
+            num_samples=args.num_samples, seed=42, tag=tag, fig_num=9
+        )
+
+        # Lưu tóm tắt kết quả (duy nhất 1 file eda_summary.json trong target_dir)
+        summary_path = target_dir / "eda_summary.json"
+        try:
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary_meta, f, indent=2, ensure_ascii=False)
+            print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
+        except Exception as e:
+            print(f"  [Warn] Không thể lưu summary json: {e}")
+
+        print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 9 biểu đồ từ 01–09 đã ghi tại: {target_dir}")
 
 
 if __name__ == "__main__":
