@@ -6,17 +6,16 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-s
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-Produces 10 figures (written under analysis/figures/ strictly from 01 to 10):
+Produces 9 figures (written under analysis/figures/ strictly from 01 to 09):
   01_class_distribution    – toàn bộ 52 lớp sắp xếp giảm dần, cột đứng, nhãn xoay 90°
   02_boxes_per_image        – phân bố số lượng bounding box trên mỗi file nhãn / ảnh
   03_box_dimensions         – phân bố w, h, tỉ lệ khung hình (w/h), diện tích box
   04_box_center_heatmap     – mật độ vị trí tâm (cx, cy) trên khung hình (2D KDE & scatter)
   05_images_per_split       – số lượng ảnh và số box theo split (train/val/test)
   06_tiny_box_candidates    – histogram và scatter box nhỏ (< min_box_px)
-  07_data_leakage           – kiểm tra rò rỉ dữ liệu (ma trận overlap + PCA feature cluster plot)
+  07_data_leakage           – kiểm tra rò rỉ dữ liệu (ma trận overlap dHash + histogram Hamming)
   08_brightness_sharpness   – phân tích độ sáng & độ sắc nét / độ mờ (Laplacian variance)
-  09_image_properties       – độ phân giải, tỉ lệ khung hình, kênh màu, định dạng, dung lượng
-  10_sample_labels          – demo n tấm ảnh mẫu vẽ bounding box và tên nhãn tiếng Việt
+  09_sample_labels          – demo n tấm ảnh mẫu vẽ bounding box và tên nhãn tiếng Việt
 
 Run:
     python -m analysis.eda --data-root data/raw
@@ -737,56 +736,15 @@ def check_and_plot_data_leakage(
     results["dhash_test_to_train"] = dhash_results
     results["leak_pairs"] = all_leak_pairs
 
-    # 3. Phân tích Cụm đặc trưng (Feature Clustering & PCA)
-    sample_train = split_stems.get("train", [])[:500]
-    sample_test = split_stems.get("test", [])[:500]
-    eval_stems = sample_train + sample_test
-    eval_labels = ["train"] * len(sample_train) + ["test"] * len(sample_test)
-
-    features = []
-    valid_labels = []
-    for stem, lbl in zip(eval_stems, eval_labels):
-        p = stem_to_path.get(stem)
-        if p and p.exists():
-            try:
-                img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-                if img is not None:
-                    h, w = img.shape[:2]
-                    if w == 640 and h == 640:
-                        img = img[140:500, :]
-                    thumb = cv2.resize(img, (16, 16)).flatten() / 255.0
-                    features.append(thumb)
-                    valid_labels.append(lbl)
-            except Exception:
-                continue
-
-    pca_coords = None
-    cluster_labels = None
-    n_clusters = 5
-    if len(features) >= 10:
-        feats_arr = np.array(features)
-        mean_v = feats_arr.mean(axis=0)
-        c_feats = feats_arr - mean_v
-        u, s, vt = np.linalg.svd(c_feats, full_matrices=False)
-        pca_coords = u[:, :2] * s[:2]
-
-        try:
-            pts = pca_coords.astype(np.float32)
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 15, 1.0)
-            _, cl_labels, _ = cv2.kmeans(pts, n_clusters, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-            cluster_labels = cl_labels.flatten()
-        except Exception:
-            cluster_labels = np.zeros(len(features), dtype=int)
-
-    # 4. Vẽ biểu đồ 4 panel (2x2): Ma trận dHash Overlap, Histogram Hamming, 2D PCA, Phân bố Cụm
-    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+    # 3. Vẽ biểu đồ 2 panel (1x2): Ma trận dHash Overlap và Histogram khoảng cách Hamming
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7.5))
     fig.suptitle(
-        f"07. Đánh giá Rò rỉ Dữ liệu dHash trên Canvas Chuẩn 640×640 & Phân cụm Đặc trưng PCA{' – ' + tag if tag else ''}",
+        f"07. Đánh giá Rò rỉ Dữ liệu dHash trên Canvas Chuẩn 640×640{' – ' + tag if tag else ''}",
         fontsize=14, fontweight="bold"
     )
 
-    # Panel [0, 0]: Ma trận Trùng lặp dHash (Ngưỡng Hamming <= 5 bit)
-    ax0 = axes[0][0]
+    # Panel 0: Ma trận Trùng lặp dHash (Ngưỡng Hamming <= 5 bit)
+    ax0 = axes[0]
     rgba_grid = np.zeros((n_splits, n_splits, 4), dtype=float)
     for i in range(n_splits):
         for j in range(n_splits):
@@ -800,9 +758,9 @@ def check_and_plot_data_leakage(
     ax0.imshow(rgba_grid, interpolation="nearest")
     ax0.set_xticks(range(n_splits))
     ax0.set_yticks(range(n_splits))
-    ax0.set_xticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
-    ax0.set_yticklabels([s.upper() for s in splits], fontsize=10, fontweight="bold")
-    ax0.set_title("1. Ma trận Trùng lặp dHash giữa các Split (Hamming ≤ 5 bit)", fontsize=11, fontweight="bold")
+    ax0.set_xticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
+    ax0.set_yticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
+    ax0.set_title("1. Ma trận Trùng lặp dHash giữa các Split (Hamming ≤ 5 bit)", fontsize=12, fontweight="bold")
 
     for i in range(n_splits):
         for j in range(n_splits):
@@ -820,10 +778,10 @@ def check_and_plot_data_leakage(
                     pct = n_u / max(len(split_stems[splits[i]]), 1) * 100
                     txt = f"Leak: {n_pairs:,} cặp\n({pct:.1f}% ảnh {splits[i].upper()})"
                     color = "#E63946"
-            ax0.text(j, i, txt, ha="center", va="center", fontsize=9.5, fontweight="bold", color=color)
+            ax0.text(j, i, txt, ha="center", va="center", fontsize=10.5, fontweight="bold", color=color)
 
-    # Panel [0, 1]: Histogram dHash Hamming Distance giữa Train và Test
-    ax1 = axes[0][1]
+    # Panel 1: Histogram dHash Hamming Distance giữa Train và Test
+    ax1 = axes[1]
     if min_dists is not None:
         bins = np.arange(-0.5, max(min_dists) + 1.5, 1)
         counts, edges, patches_list = ax1.hist(min_dists, bins=bins, edgecolor="white", linewidth=0.5, alpha=0.85)
@@ -841,58 +799,14 @@ def check_and_plot_data_leakage(
                     label=f"Trung vị khoảng cách = {np.median(min_dists):.0f}")
 
         pct_val = dhash_results.get("near_duplicates_pct_le_5", 0)
-        ax1.set_xlabel("Khoảng cách Hamming dHash giữa Test và Train (≤ 5 bit: Rò rỉ video frame)", fontsize=10)
-        ax1.set_ylabel("Số lượng ảnh Test", fontsize=10)
+        ax1.set_xlabel("Khoảng cách Hamming dHash giữa Test và Train (≤ 5 bit: Rò rỉ video frame)", fontsize=11)
+        ax1.set_ylabel("Số lượng ảnh Test", fontsize=11)
         ax1.set_title(f"2. Phân bố Độ tương đồng Bối cảnh Test vs Train (Near-duplicate: {pct_val:.1f}%)",
-                      fontsize=11, fontweight="bold")
+                      fontsize=12, fontweight="bold")
         ax1.grid(axis="y", linestyle=":", alpha=0.5)
-        ax1.legend(fontsize=9.5)
+        ax1.legend(fontsize=10)
     else:
         ax1.text(0.5, 0.5, "Không đủ dữ liệu dHash (cần cả train và test)", ha="center", va="center")
-
-    # Panel [1, 0]: 2D PCA Feature Space Scatter
-    ax2 = axes[1][0]
-    if pca_coords is not None:
-        valid_labels_arr = np.array(valid_labels)
-        idx_train = np.where(valid_labels_arr == "train")[0]
-        idx_test = np.where(valid_labels_arr == "test")[0]
-
-        ax2.scatter(pca_coords[idx_train, 0], pca_coords[idx_train, 1],
-                    alpha=0.45, s=20, color="#3A86FF", label="Train Split", edgecolors="none")
-        ax2.scatter(pca_coords[idx_test, 0], pca_coords[idx_test, 1],
-                    alpha=0.75, s=28, color="#FB5607", label="Test Split", marker="^", edgecolors="none")
-        ax2.set_xlabel("Principal Component 1 (PCA 1)", fontsize=10)
-        ax2.set_ylabel("Principal Component 2 (PCA 2)", fontsize=10)
-        ax2.set_title("3. Không gian đặc trưng 2D PCA từ Canvas 640×640 (Train vs Test)", fontsize=11, fontweight="bold")
-        ax2.grid(linestyle=":", alpha=0.5)
-        ax2.legend(fontsize=9.5)
-    else:
-        ax2.text(0.5, 0.5, "Không đủ mẫu để vẽ PCA", ha="center", va="center")
-
-    # Panel [1, 1]: Phân bố Cụm cảnh (Scene Clusters) giữa Train và Test
-    ax3 = axes[1][1]
-    if cluster_labels is not None:
-        valid_labels_arr = np.array(valid_labels)
-        train_cl_counts = [((valid_labels_arr == "train") & (cluster_labels == k)).sum() for k in range(n_clusters)]
-        test_cl_counts = [((valid_labels_arr == "test") & (cluster_labels == k)).sum() for k in range(n_clusters)]
-
-        tr_total = max(sum(train_cl_counts), 1)
-        te_total = max(sum(test_cl_counts), 1)
-        train_pcts = [c / tr_total * 100 for c in train_cl_counts]
-        test_pcts = [c / te_total * 100 for c in test_cl_counts]
-
-        x_cl = np.arange(n_clusters)
-        w_b = 0.35
-        ax3.bar(x_cl - w_b / 2, train_pcts, width=w_b, color="#3A86FF", label="Train (%)", alpha=0.85)
-        ax3.bar(x_cl + w_b / 2, test_pcts, width=w_b, color="#FB5607", label="Test (%)", alpha=0.85)
-        ax3.set_xticks(x_cl)
-        ax3.set_xticklabels([f"Cụm {k+1}" for k in x_cl], fontsize=9.5, fontweight="bold")
-        ax3.set_ylabel("Tỷ lệ phân bố (%)", fontsize=10)
-        ax3.set_title("4. Phân bố theo Cụm đặc trưng trên Canvas 640×640 (Cluster Balance)", fontsize=11, fontweight="bold")
-        ax3.grid(axis="y", linestyle=":", alpha=0.5)
-        ax3.legend(fontsize=9.5)
-    else:
-        ax3.text(0.5, 0.5, "Không đủ dữ liệu phân cụm", ha="center", va="center")
 
     # Đánh giá tổng hợp ghi ở cuối biểu đồ
     if total_leaks > 0:
@@ -909,9 +823,9 @@ def check_and_plot_data_leakage(
             f"(Khoảng cách Hamming nhỏ nhất giữa Test và Train: {min_h} bit > 5 bit) -> Dữ liệu hoàn toàn cô lập."
         )
         note_color = "#2A9D8F"
-    fig.text(0.5, 0.015, status_note, ha="center", fontsize=10.5, fontweight="bold", color=note_color)
+    fig.text(0.5, 0.02, status_note, ha="center", fontsize=11, fontweight="bold", color=note_color)
 
-    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     fname = out_dir / "07_data_leakage.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
@@ -1075,119 +989,7 @@ def analyze_and_plot_brightness_sharpness(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 09. Image Properties (Độ phân giải, Tỉ lệ khung hình, Kênh màu, Định dạng, Dung lượng)
-# ──────────────────────────────────────────────────────────────────────────────
-
-def analyze_and_plot_image_properties(
-    img_paths: list[Path],
-    out_dir: Path,
-    tag: str = "",
-) -> dict[str, Any]:
-    """Figure 09: Thống kê độ phân giải, tỷ lệ khung hình, số kênh màu, định dạng và dung lượng file."""
-    if not img_paths:
-        print("  [Props] Không có file ảnh để phân tích thuộc tính.")
-        return {}
-
-    widths, heights, aspect_ratios = [], [], []
-    formats, channels, sizes_kb = [], [], []
-
-    for p in img_paths:
-        try:
-            sz_kb = p.stat().st_size / 1024.0
-            sizes_kb.append(sz_kb)
-
-            with Image.open(p) as img:
-                w, h = img.size
-                widths.append(w)
-                heights.append(h)
-                aspect_ratios.append(round(w / h, 2))
-                formats.append(img.format or p.suffix.upper().replace(".", ""))
-                mode = img.mode
-                c = 3 if mode in ("RGB", "YCbCr") else (4 if mode == "RGBA" else (1 if mode == "L" else 3))
-                channels.append(c)
-        except Exception:
-            continue
-
-    if not widths:
-        return {}
-
-    w_arr = np.array(widths)
-    h_arr = np.array(heights)
-    ar_arr = np.array(aspect_ratios)
-    sz_arr = np.array(sizes_kb)
-
-    fig, axes = plt.subplots(2, 2, figsize=(16, 11))
-    fig.suptitle(f"09. Thống kê Thuộc tính Tập ảnh (Image Metadata & Properties){' – ' + tag if tag else ''}",
-                 fontsize=14, fontweight="bold")
-
-    # 1. Độ phân giải (Width vs Height)
-    ax0 = axes[0][0]
-    res_pairs = [f"{w}x{h}" for w, h in zip(widths, heights)]
-    top_res = Counter(res_pairs).most_common(5)
-    top_res_str = ", ".join([f"{k} ({v} ảnh)" for k, v in top_res[:3]])
-
-    ax0.scatter(w_arr, h_arr, color="#3A86FF", alpha=0.3, s=15, edgecolors="none")
-    ax0.set_xlabel("Chiều rộng (Width px)", fontsize=10)
-    ax0.set_ylabel("Chiều cao (Height px)", fontsize=10)
-    ax0.set_title(f"Độ phân giải ảnh (Top: {top_res_str})", fontsize=11, fontweight="bold")
-    ax0.grid(linestyle=":", alpha=0.5)
-
-    # 2. Tỉ lệ khung hình (Aspect Ratio)
-    ax1 = axes[0][1]
-    ax1.hist(ar_arr, bins=35, color="#06D6A0", edgecolor="white", linewidth=0.5, alpha=0.85)
-    ax1.axvline(1.0, color="#E63946", linestyle="--", linewidth=1.5, label="1:1 (Vuông)")
-    ax1.axvline(1.33, color="#FB5607", linestyle="--", linewidth=1.5, label="4:3 (~1.33)")
-    ax1.axvline(1.78, color="#8338EC", linestyle="--", linewidth=1.5, label="16:9 (~1.78)")
-    ax1.set_xlabel("Tỉ lệ khung hình (Width / Height)", fontsize=10)
-    ax1.set_ylabel("Số lượng ảnh", fontsize=10)
-    ax1.set_title(f"Phân bố Tỉ lệ khung hình (Median = {np.median(ar_arr):.2f})", fontsize=11, fontweight="bold")
-    ax1.grid(axis="y", linestyle=":", alpha=0.5)
-    ax1.legend(fontsize=9)
-
-    # 3. Định dạng và Số kênh màu
-    ax2 = axes[1][0]
-    fmt_counter = Counter(formats)
-    ch_counter = Counter(channels)
-
-    labels_fmt = [f"{k} ({v})" for k, v in fmt_counter.items()]
-    ax2.bar(range(len(fmt_counter)), list(fmt_counter.values()), color="#FFB703", edgecolor="black", linewidth=0.5)
-    ax2.set_xticks(range(len(fmt_counter)))
-    ax2.set_xticklabels(labels_fmt, fontsize=10, fontweight="bold")
-    ax2.set_ylabel("Số lượng ảnh", fontsize=10)
-    ch_str = ", ".join([f"{k} kênh: {v} ảnh" for k, v in ch_counter.items()])
-    ax2.set_title(f"Định dạng tệp ảnh & Kênh màu ({ch_str})", fontsize=11, fontweight="bold")
-    ax2.grid(axis="y", linestyle=":", alpha=0.5)
-
-    # 4. Dung lượng tệp (File Size in KB)
-    ax3 = axes[1][1]
-    ax3.hist(sz_arr, bins=40, color="#8338EC", edgecolor="white", linewidth=0.5, alpha=0.85)
-    ax3.axvline(np.median(sz_arr), color="#E63946", linestyle="--", linewidth=1.5, label=f"Median = {np.median(sz_arr):.1f} KB")
-    ax3.axvline(sz_arr.mean(), color="#FFB703", linestyle=":", linewidth=1.5, label=f"Mean = {sz_arr.mean():.1f} KB")
-    ax3.set_xlabel("Dung lượng tệp (KB)", fontsize=10)
-    ax3.set_ylabel("Số lượng ảnh", fontsize=10)
-    ax3.set_title(f"Phân bố Dung lượng tệp (Min: {sz_arr.min():.1f}KB, Max: {sz_arr.max():.1f}KB)", fontsize=11, fontweight="bold")
-    ax3.grid(axis="y", linestyle=":", alpha=0.5)
-    ax3.legend(fontsize=9)
-
-    plt.tight_layout()
-    fname = out_dir / "09_image_properties.png"
-    plt.savefig(fname, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {fname}")
-    print(f"  Độ phân giải phổ biến: {top_res[:2]}")
-    print(f"  Dung lượng ảnh: trung bình {sz_arr.mean():.1f} KB, trung vị {np.median(sz_arr):.1f} KB")
-
-    return {
-        "resolutions_top": top_res,
-        "aspect_ratio_median": float(np.median(ar_arr)),
-        "file_size_kb_mean": float(sz_arr.mean()),
-        "formats": dict(fmt_counter),
-        "channels": dict(ch_counter),
-    }
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 10. Sample Labeled Images (Demo trực quan hóa n ảnh kèm bounding box)
+# 09. Sample Labeled Images (Demo trực quan hóa n ảnh kèm bounding box)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_sample_labeled_images(
@@ -1199,7 +1001,7 @@ def plot_sample_labeled_images(
     seed: int = 42,
     tag: str = "",
 ) -> None:
-    """Figure 10: Trực quan hóa n ảnh mẫu kèm bounding box và nhãn lớp tiếng Việt."""
+    """Figure 09: Trực quan hóa n ảnh mẫu kèm bounding box và nhãn lớp tiếng Việt."""
     if not boxes:
         return
 
@@ -1239,7 +1041,7 @@ def plot_sample_labeled_images(
     rows = (n_show + cols - 1) // cols
 
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 5.5, rows * 4.5))
-    fig.suptitle(f"10. Ảnh Mẫu Kiểm tra Bounding Box & Nhãn Lớp Tiếng Việt{' – ' + tag if tag else ''}",
+    fig.suptitle(f"09. Ảnh Mẫu Kiểm tra Bounding Box & Nhãn Lớp Tiếng Việt{' – ' + tag if tag else ''}",
                  fontsize=14, fontweight="bold", y=0.99)
 
     ax_list = axes.flatten() if hasattr(axes, "flatten") else [axes]
@@ -1291,7 +1093,7 @@ def plot_sample_labeled_images(
         ax_list[j].axis("off")
 
     plt.tight_layout()
-    fname = out_dir / "10_sample_labels.png"
+    fname = out_dir / "09_sample_labels.png"
     plt.savefig(fname, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {fname}")
@@ -1462,8 +1264,8 @@ def main(argv=None) -> None:
         tag=tag,
     )
 
-    # ── 07. Data leakage & Feature Clustering ──
-    print("\n[EDA] 07 Data leakage check & PCA Feature Clustering...")
+    # ── 07. Data leakage check (dHash Overlap Matrix & Hamming Distance) ──
+    print("\n[EDA] 07 Data leakage check (dHash Overlap Matrix & Hamming Distance)...")
     leak_res = check_and_plot_data_leakage(data_root, split_stems, target_dir, tag=tag)
     summary_meta["leakage"] = leak_res
 
@@ -1474,13 +1276,8 @@ def main(argv=None) -> None:
     )
     summary_meta["quality"] = qual_res
 
-    # ── 09. Image properties & metadata ──
-    print("\n[EDA] 09 Image properties & metadata...")
-    props_res = analyze_and_plot_image_properties(img_paths, target_dir, tag=tag)
-    summary_meta["properties"] = props_res
-
-    # ── 10. Demo n tấm ảnh có label ──
-    print(f"\n[EDA] 10 Demo {args.num_samples} ảnh mẫu kèm label...")
+    # ── 09. Demo n tấm ảnh có label ──
+    print(f"\n[EDA] 09 Demo {args.num_samples} ảnh mẫu kèm label...")
     plot_sample_labeled_images(
         data_root, all_boxes, classes, target_dir,
         num_samples=args.num_samples, seed=42, tag=tag
@@ -1495,7 +1292,7 @@ def main(argv=None) -> None:
     except Exception as e:
         print(f"  [Warn] Không thể lưu summary json: {e}")
 
-    print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 10 biểu đồ từ 01–10 đã ghi tại: {target_dir}")
+    print(f"\n[EDA] Hoàn thành phân tích! Toàn bộ 9 biểu đồ từ 01–09 đã ghi tại: {target_dir}")
 
 
 if __name__ == "__main__":
