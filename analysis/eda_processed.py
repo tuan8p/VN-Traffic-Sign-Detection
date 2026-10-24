@@ -51,9 +51,9 @@ def analyze_processed_dataset(
     num_samples: int = 9,
     quality_samples: int = 1000,
     dhash_size: int = 32,
-    dhash_hamming: int = 380,
+    dhash_hamming: int = 362,
     phash_size: int = 8,
-    phash_hamming: int = 18,
+    phash_hamming: int = 10,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Quy trình phân tích chuyên sâu độc lập cho dataset sau tiền xử lý (9 biểu đồ)."""
@@ -169,8 +169,8 @@ def main(argv=None) -> None:
     p.add_argument("--num-samples", type=int, default=9, help="Số ảnh mẫu vẽ demo nhãn (default: 9)")
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
     p.add_argument("--dhash-size", type=int, default=32, help="Kích thước cạnh dHash (default: 32 -> 1024 bits)")
-    p.add_argument("--dhash-hamming", type=int, default=380, help="Ngưỡng khoảng cách Hamming dHash gom cụm (default: 380)")
-    p.add_argument("--phash-hamming", type=int, default=18, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (default: 18)")
+    p.add_argument("--dhash-hamming", type=int, default=362, help="Ngưỡng khoảng cách Hamming dHash chuẩn hóa theo resize 640x640 (default: 362)")
+    p.add_argument("--phash-hamming", type=int, default=10, help="Ngưỡng khoảng cách Hamming pHash phụ trợ biên (default: 10)")
     args = p.parse_args(argv)
 
     data_root = Path(args.data_root).resolve()
