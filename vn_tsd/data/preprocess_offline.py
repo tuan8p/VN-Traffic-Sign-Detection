@@ -159,10 +159,11 @@ def preprocess_dataset_offline(
     min_box_px: int = 8,
     pad_value: int = 114,
     augment_minority: bool = True,
-    minority_target_boxes: int = 50,
+    minority_target_boxes: int | str = "max",
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 370,
+    phash_thresh: int | None = 10,
     seed: int = 42,
 ) -> Path:
     """Pipeline tiền xử lý offline: phân cụm toàn bộ ảnh thô và chia split theo cụm độc lập."""
@@ -205,6 +206,7 @@ def preprocess_dataset_offline(
         ratio=ratio,
         hash_size=hash_size,
         hamming_thresh=hamming_thresh,
+        phash_thresh=phash_thresh,
         seed=seed,
     )
 
@@ -312,7 +314,9 @@ def preprocess_dataset_offline(
             train_lbl_dir=out_root / "labels" / "train",
             val_test_packed=val_test_packed,
             target_min_boxes=minority_target_boxes,
+            image_size=image_size,
             min_box_px=min_box_px,
+            pad_value=pad_value,
             seed=seed,
         )
         meta["splits"]["train"]["n_images"] += aug_stats["n_augmented_images"]
@@ -334,8 +338,8 @@ def preprocess_dataset_offline(
         train_stems=train_stems_processed,
         test_stems=test_stems_processed,
         stem_to_path=proc_stem_to_path,
-        hash_size=32,
-        hamming_thresh=370,
+        hash_size=hash_size,
+        hamming_thresh=hamming_thresh,
     )
 
     clean_file = out_root / "test_clean_files.txt"
@@ -352,7 +356,7 @@ def preprocess_dataset_offline(
         "leaked_pct": round(len(leaked_test) / max(len(test_stems_processed), 1) * 100, 2),
         "status": "PASSED" if not leaked_test else "LEAK_DETECTED",
     }
-    print(f"[preprocess] Kiểm tra Data Leakage (dHash size=32, Hamming ≤ 370): {len(leaked_test)}/{len(test_stems_processed)} ảnh rò rỉ.")
+    print(f"[preprocess] Kiểm tra Data Leakage (dHash size={hash_size}, Hamming ≤ {hamming_thresh}): {len(leaked_test)}/{len(test_stems_processed)} ảnh rò rỉ.")
     print(f"[preprocess]   Ghi danh sách test sạch : {clean_file}")
     print(f"[preprocess]   Ghi danh sách rò rỉ     : {leak_file}")
 
@@ -381,14 +385,23 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
     )
     hash_sz = int(split_cfg.get("hash_size", 32))
     h_thresh = int(split_cfg.get("hamming_threshold", 370))
+    raw_phash_thresh = split_cfg.get("phash_threshold", 10)
+    p_thresh = int(raw_phash_thresh) if (raw_phash_thresh is not None and str(raw_phash_thresh).strip().lower() not in ("none", "false")) else None
 
     d_root = data_root or prep.get("raw_dir", "data/raw")
     out_root = prep.get("processed_dir", "data/processed")
     target_size = tuple(prep.get("image_size", [640, 640]))
     min_box_px = int(prep.get("min_box_px", 8))
     pad_val = int(prep.get("pad_value", 114))
-    aug_min = bool(cfg.get("augment_minority", True))
-    aug_target = int(cfg.get("minority_target_boxes", 50))
+    aug_min = bool(prep.get("augment_minority", cfg.get("augment_minority", True)))
+    raw_aug_target = prep.get("minority_target_boxes", cfg.get("minority_target_boxes", "max"))
+    if raw_aug_target is None or str(raw_aug_target).strip().lower() in ("max", "-1", "none"):
+        aug_target: int | str = "max"
+    else:
+        try:
+            aug_target = int(raw_aug_target)
+        except (ValueError, TypeError):
+            aug_target = "max"
     seed = int(cfg.get("seed", 42))
 
     return preprocess_dataset_offline(
@@ -402,5 +415,6 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
         ratio=ratios,
         hash_size=hash_sz,
         hamming_thresh=h_thresh,
+        phash_thresh=p_thresh,
         seed=seed,
     )

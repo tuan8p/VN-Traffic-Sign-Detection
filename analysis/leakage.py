@@ -45,8 +45,22 @@ def check_data_leakage(
 
     split_valid_stems: dict[str, list[str]] = {}
     split_packed: dict[str, np.ndarray] = {}
+    max_check_per_split = 2500
     for s in splits:
-        valid = [st for st in split_stems[s] if _get_hash(st) is not None]
+        stems_to_eval = split_stems[s]
+        if len(stems_to_eval) > max_check_per_split:
+            # Ưu tiên kiểm tra toàn bộ ảnh gốc (Real) trước, sau đó lấy mẫu đều các ảnh augmented
+            real_stems = [st for st in stems_to_eval if not ("_aug" in st)]
+            aug_stems = [st for st in stems_to_eval if "_aug" in st]
+            remain = max(0, max_check_per_split - len(real_stems))
+            if remain > 0 and aug_stems:
+                step = max(1, len(aug_stems) // remain)
+                sampled_aug = aug_stems[::step][:remain]
+                stems_to_eval = real_stems + sampled_aug
+            else:
+                stems_to_eval = real_stems[:max_check_per_split]
+
+        valid = [st for st in stems_to_eval if _get_hash(st) is not None]
         split_valid_stems[s] = valid
         if valid:
             mat = np.array([_get_hash(st) for st in valid], dtype=np.uint8)

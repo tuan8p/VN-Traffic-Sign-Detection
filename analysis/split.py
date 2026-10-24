@@ -45,14 +45,21 @@ def split_by_dhash_clusters(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 370,
+    phash_thresh: int | None = 10,
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Phân chia split hoàn toàn tự động dựa trên kết quả gom cụm dHash từ ảnh."""
+    """Phân chia split hoàn toàn tự động dựa trên kết quả gom cụm dHash + pHash từ ảnh."""
     if not img_paths:
         return {"train": [], "val": [], "test": []}
 
-    print(f"[split] Bước 1: Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming ≤ {hamming_thresh})...")
-    cluster_res = cluster_images_dhash(img_paths, hash_size=hash_size, hamming_thresh=hamming_thresh)
+    phash_str = f" + pHash 64-bit (Hamming ≤ {phash_thresh})" if phash_thresh else ""
+    print(f"[split] Bước 1: Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming ≤ {hamming_thresh}){phash_str}...")
+    cluster_res = cluster_images_dhash(
+        img_paths,
+        hash_size=hash_size,
+        hamming_thresh=hamming_thresh,
+        phash_thresh=phash_thresh,
+    )
     clusters = cluster_res.get("clusters", {})
     if not clusters:
         print("[split] Cảnh báo: Không thể gom cụm, dùng danh sách ảnh phẳng.")

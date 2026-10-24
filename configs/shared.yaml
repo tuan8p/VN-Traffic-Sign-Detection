@@ -37,12 +37,13 @@ preprocess:
   # augmentation that does not mirror sign classes.
   hflip: false
   augment_minority: true
-  minority_target_boxes: 50
+  minority_target_boxes: max # Cân bằng tất cả các class trong train bằng class cao nhất (isolated crop + blur/rotate/zoom)
 
 split:
   ratios: { train: 0.7, val: 0.15, test: 0.15 }
   hash_size: 32
   hamming_threshold: 370
+  phash_threshold: 10 # Ngưỡng pHash DCT 64-bit gộp các cụm tương đồng sau bước dHash
 
 # One total for both pipelines. Size it to fill the 2 Kaggle T4s.
 # Do not give each pipeline its own train or eval batch.
