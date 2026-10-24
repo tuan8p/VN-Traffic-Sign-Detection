@@ -368,6 +368,35 @@ def preprocess_dataset_offline(
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     print(f"[preprocess] meta.json ghi tại: {meta_path}")
+
+    # ── Tự động tạo class_index_cache.json để GUI Class Viewer luôn đồng bộ 100% ──
+    try:
+        c_to_stems: dict[int, list[str]] = defaultdict(list)
+        s_to_data: dict[str, Any] = {}
+        for sname in ("train", "val", "test"):
+            s_lbl_dir = out_root / "labels" / sname
+            if not s_lbl_dir.is_dir():
+                continue
+            for txt_p in s_lbl_dir.glob("*.txt"):
+                stem = txt_p.stem
+                boxes = _read_raw_labels(txt_p)
+                for b in boxes:
+                    if stem not in c_to_stems[b[0]]:
+                        c_to_stems[b[0]].append(stem)
+                img_p = out_root / "images" / sname / f"{stem}.jpg"
+                s_to_data[stem] = {
+                    "split": sname,
+                    "is_aug": ("_aug" in stem),
+                    "boxes": boxes,
+                    "img_path": str(img_p.resolve()),
+                }
+        cache_p = out_root / "class_index_cache.json"
+        with open(cache_p, "w", encoding="utf-8") as f:
+            json.dump({"class_to_stems": c_to_stems, "stem_to_data": s_to_data}, f)
+        print(f"[preprocess] class_index_cache.json ghi tại: {cache_p}")
+    except Exception as e:
+        print(f"[preprocess] Cảnh báo tạo cache index: {e}")
+
     print(f"[preprocess] Hoàn thành trong {elapsed:.1f}s  →  {out_root}")
 
     return out_root
