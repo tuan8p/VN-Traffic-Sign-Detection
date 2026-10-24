@@ -9,8 +9,8 @@ import numpy as np
 
 from PIL import Image
 
-from analysis.image_utils import calculate_brightness_sharpness
-from analysis.clustering import cluster_images_dhash
+from analysis.helpers.image_utils import calculate_brightness_sharpness
+from analysis.helpers.clustering import cluster_images_dhash
 
 
 def _read_labels_for_stems(
@@ -217,8 +217,8 @@ def split_by_dhash_clusters(
     lbl_dir: Path,
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
-    hamming_thresh: int = 370,
-    phash_thresh: int | None = 10,
+    hamming_thresh: int = 380,
+    phash_thresh: int | None = 18,
     min_box_px: int = 8,
     image_size: tuple[int, int] = (640, 640),
     seed: int = 42,

@@ -14,10 +14,10 @@ from PIL import Image
 
 from collections import defaultdict, Counter
 
-from analysis.image_utils import calculate_dhash
-from analysis.clustering import cluster_images_dhash
-from vn_tsd.data.split import split_clusters_for_classes, split_by_dhash_clusters
-from vn_tsd.data.augmentation import (
+from analysis.helpers.image_utils import calculate_dhash
+from analysis.helpers.clustering import cluster_images_dhash
+from vn_tsd.data.helpers.split import split_clusters_for_classes, split_by_dhash_clusters
+from vn_tsd.data.helpers.augmentation import (
     augment_minority_classes,
     _read_raw_labels,
     _write_labels,
@@ -163,8 +163,8 @@ def preprocess_dataset_offline(
     minority_target_boxes: int | str = "adaptive",
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
-    hamming_thresh: int = 370,
-    phash_thresh: int | None = 10,
+    hamming_thresh: int = 380,
+    phash_thresh: int | None = 18,
     seed: int = 42,
 ) -> Path:
     """Pipeline tiền xử lý offline 5 BƯỚC chuẩn xác:
@@ -480,8 +480,8 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
         float(ratios_dict.get("test", 0.15)),
     )
     hash_sz = int(split_cfg.get("hash_size", 32))
-    h_thresh = int(split_cfg.get("hamming_threshold", 370))
-    raw_phash_thresh = split_cfg.get("phash_threshold", 10)
+    h_thresh = int(split_cfg.get("hamming_threshold", 380))
+    raw_phash_thresh = split_cfg.get("phash_threshold", 18)
     p_thresh = int(raw_phash_thresh) if (raw_phash_thresh is not None and str(raw_phash_thresh).strip().lower() not in ("none", "false")) else None
 
     d_root = data_root or prep.get("raw_dir", "data/raw")

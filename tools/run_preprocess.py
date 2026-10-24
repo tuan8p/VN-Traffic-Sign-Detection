@@ -25,8 +25,8 @@ def main(argv=None) -> None:
     p.add_argument("--shared", default="configs/shared.yaml", help="Đường dẫn shared.yaml")
     p.add_argument("--pipeline", default=None, help="Pipeline yaml để merge (tùy chọn)")
     p.add_argument("--dhash-size", type=int, default=None, help="Kích thước dHash (mặc định lấy từ shared.yaml: 32)")
-    p.add_argument("--dhash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming gom cụm (mặc định lấy từ shared.yaml: 370)")
-    p.add_argument("--phash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (mặc định lấy từ shared.yaml: 10)")
+    p.add_argument("--dhash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming gom cụm (mặc định lấy từ shared.yaml: 380)")
+    p.add_argument("--phash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (mặc định lấy từ shared.yaml: 18)")
     p.add_argument("--target-boxes", default=None, help="Ngưỡng box mục tiêu mỗi class trong train (mặc định lấy từ shared.yaml: 'adaptive' cho tỷ lệ 1.5-3x)")
     args = p.parse_args(argv)
 
@@ -48,8 +48,8 @@ def main(argv=None) -> None:
     print(f"[run_preprocess] image_size    : {cfg.get('preprocess', {}).get('image_size')}")
     print(f"[run_preprocess] min_box_px    : {cfg.get('preprocess', {}).get('min_box_px')}")
     print(f"[run_preprocess] dhash_size    : {cfg.get('split', {}).get('hash_size', 32)}")
-    print(f"[run_preprocess] dhash_hamming : {cfg.get('split', {}).get('hamming_threshold', 370)}")
-    print(f"[run_preprocess] phash_hamming : {cfg.get('split', {}).get('phash_threshold', 10)}")
+    print(f"[run_preprocess] dhash_hamming : {cfg.get('split', {}).get('hamming_threshold', 380)}")
+    print(f"[run_preprocess] phash_hamming : {cfg.get('split', {}).get('phash_threshold', 18)}")
     print(f"[run_preprocess] target_boxes  : {cfg.get('preprocess', {}).get('minority_target_boxes', 'max')}")
 
     out = run_offline(cfg, args.data_root)

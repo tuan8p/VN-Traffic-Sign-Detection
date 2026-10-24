@@ -73,8 +73,8 @@ def plot_class_distribution(
         y_tr_real = [train_real_counts[c] for c in sorted_cids]
         y_tr_aug = [train_aug_counts[c] for c in sorted_cids]
 
-        p_real = ax_tr.bar(x_indices, y_tr_real, color="#1D3557", label="Ảnh Thật (Real)", width=0.72)
-        p_aug = ax_tr.bar(x_indices, y_tr_aug, bottom=y_tr_real, color="#E76F51", label="Ảnh Tự tạo (Augmented)", width=0.72)
+        ax_tr.bar(x_indices, y_tr_real, color="#1D3557", label="Ảnh Thật (Real)", width=0.72)
+        ax_tr.bar(x_indices, y_tr_aug, bottom=y_tr_real, color="#E76F51", label="Ảnh Tự tạo (Augmented)", width=0.72)
 
         tot_tr_real = sum(y_tr_real)
         tot_tr_aug = sum(y_tr_aug)
@@ -84,8 +84,6 @@ def plot_class_distribution(
             fontweight="bold",
             pad=8,
         )
-        ax_tr.set_ylabel("Số lượng Box", fontsize=11)
-        ax_tr.grid(axis="y", linestyle=":", alpha=0.5)
         ax_tr.legend(loc="upper right", fontsize=11, framealpha=0.9)
 
         # ── Panel 1: Tập Validation ──
@@ -99,8 +97,6 @@ def plot_class_distribution(
             fontweight="bold",
             pad=8,
         )
-        ax_val.set_ylabel("Số lượng Box", fontsize=11)
-        ax_val.grid(axis="y", linestyle=":", alpha=0.5)
         ax_val.legend(loc="upper right", fontsize=11, framealpha=0.9)
 
         # ── Panel 2: Tập Test ──
@@ -114,11 +110,19 @@ def plot_class_distribution(
             fontweight="bold",
             pad=8,
         )
-        ax_te.set_ylabel("Số lượng Box", fontsize=11)
         ax_te.set_xticks(x_indices)
         ax_te.set_xticklabels(x_labels, rotation=90, fontsize=9.5)
-        ax_te.grid(axis="y", linestyle=":", alpha=0.5)
         ax_te.legend(loc="upper right", fontsize=11, framealpha=0.9)
+
+        # Cài đặt trục Y theo thang log (symlog) cho cả 3 panel
+        y_ticks = [0, 1, 5, 20, 100, 500]
+        for ax in axes:
+            ax.set_yscale("symlog", linthresh=1, linscale=0.5)
+            ax.set_yticks(y_ticks)
+            ax.get_yaxis().set_major_formatter(plt.ScalarFormatter())
+            ax.set_ylim(bottom=0, top=700)
+            ax.set_ylabel("Số lượng Box (Log scale)", fontsize=11)
+            ax.grid(axis="y", linestyle=":", alpha=0.5)
 
         fig.tight_layout(rect=[0, 0.02, 1, 0.96])
 
@@ -140,14 +144,17 @@ def plot_class_distribution(
         bars = ax.bar(x_coords, counts, color=colors, edgecolor="#2B3A42", linewidth=0.7, alpha=0.9, width=0.75)
 
         y_max = max(counts) if len(counts) else 0
-        y_margin = max(y_max * 0.02, 3)
-        ax.set_ylim(0, y_max * 1.15 + 5)
+        ax.set_yscale("symlog", linthresh=1, linscale=0.5)
+        y_ticks_raw = [0, 1, 5, 20, 100, 500, 1000] if y_max >= 500 else [0, 1, 5, 20, 100, 500]
+        ax.set_yticks(y_ticks_raw)
+        ax.get_yaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.set_ylim(bottom=0, top=y_max * 1.35)
 
         for bar, cnt in zip(bars, counts):
             if cnt > 0:
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + y_margin,
+                    cnt * 1.08,
                     str(cnt),
                     ha="center",
                     va="bottom",
@@ -163,7 +170,7 @@ def plot_class_distribution(
             pad=12,
         )
         ax.set_xlabel("Lớp biển báo ([ID] Tên tiếng Việt)", fontsize=12)
-        ax.set_ylabel("Số lượng Bounding Box", fontsize=12)
+        ax.set_ylabel("Số lượng Bounding Box (Log scale)", fontsize=12)
         ax.set_xticks(x_coords)
         ax.set_xticklabels(labels, rotation=90, fontsize=9.5)
         ax.grid(axis="y", linestyle=":", alpha=0.5)

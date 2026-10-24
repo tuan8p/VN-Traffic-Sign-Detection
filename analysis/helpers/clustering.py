@@ -14,7 +14,7 @@ from collections import Counter
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis.image_utils import calculate_dhash, calculate_dhash_and_phash
+from analysis.helpers.image_utils import calculate_dhash, calculate_dhash_and_phash
 
 
 class _DisjointSet:
@@ -44,9 +44,9 @@ class _DisjointSet:
 def cluster_images_dhash(
     img_paths: list[Path],
     hash_size: int = 32,
-    hamming_thresh: int = 370,
+    hamming_thresh: int = 380,
     phash_size: int = 8,
-    phash_thresh: int | None = 10,
+    phash_thresh: int | None = 18,
     max_merge_cluster_size: int = 1800,
 ) -> dict[str, Any]:
     """Gom cụm ảnh 2 giai đoạn: dHash (gradient) kết hợp pHash (tần số DCT).
@@ -150,9 +150,9 @@ def cluster_images_dhash(
 
         final_raw_groups = [[valid_stems[idx] for idx in group] for group in merged_clusters.values()]
         print(
-            f"[cluster] dHash (Hamming <= {hamming_thresh}): {initial_cluster_count} cụm  →  "
-            f"pHash gộp (Hamming <= {phash_thresh}): giảm {clusters_merged_by_phash} cụm  →  "
-            f"Còn lại {len(final_raw_groups)} cụm."
+            f"[cluster] dHash (Hamming <= {hamming_thresh}): {initial_cluster_count} cum -> "
+            f"pHash gop (Hamming <= {phash_thresh}): giam {clusters_merged_by_phash} cum -> "
+            f"Con lai {len(final_raw_groups)} cum."
         )
     else:
         final_raw_groups = [[valid_stems[idx] for idx in group] for group in raw_clusters.values()]
