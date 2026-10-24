@@ -114,6 +114,11 @@ def split_clusters_for_classes(
     for cid, cset in class_to_clusters.items():
         if len(cset) == 1:
             mandatory_train.update(cset)
+        else:
+            tot_b = sum(len(clusters[c]) for c in cset)
+            if tot_b <= 30:
+                largest_c = max(cset, key=lambda c: len(clusters[c]))
+                mandatory_train.add(largest_c)
 
     for cname, c_stems in clusters.items():
         if len(c_stems) >= 300:

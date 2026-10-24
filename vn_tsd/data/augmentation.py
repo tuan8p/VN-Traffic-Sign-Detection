@@ -48,6 +48,7 @@ def get_safe_crop_bounds(
     bx2 = (t_cx + t_bw / 2.0) * W
     by2 = (t_cy + t_bh / 2.0) * H
 
+    b_area = max(1.0, (bx2 - bx1) * (by2 - by1))
     safe_x1, safe_y1 = 0.0, 0.0
     safe_x2, safe_y2 = float(W), float(H)
 
@@ -56,35 +57,35 @@ def get_safe_crop_bounds(
         oy1 = (o_cy - o_bh / 2.0) * H
         ox2 = (o_cx + o_bw / 2.0) * W
         oy2 = (o_cy + o_bh / 2.0) * H
+        o_area = max(1.0, (ox2 - ox1) * (oy2 - oy1))
 
-        h_overlap = (bx1 < ox2 - 1e-3) and (bx2 > ox1 + 1e-3)
-        v_overlap = (by1 < oy2 - 1e-3) and (by2 > oy1 + 1e-3)
+        iw = max(0.0, min(bx2, ox2) - max(bx1, ox1))
+        ih = max(0.0, min(by2, oy2) - max(by1, oy1))
+        inter_area = iw * ih
 
-        if h_overlap and v_overlap:
-            return None
-        elif h_overlap:
-            if by1 >= oy2 - 1e-3:
-                safe_y1 = max(safe_y1, oy2)
-            elif by2 <= oy1 + 1e-3:
-                safe_y2 = min(safe_y2, oy1)
-        elif v_overlap:
-            if bx1 >= ox2 - 1e-3:
-                safe_x1 = max(safe_x1, ox2)
-            elif bx2 <= ox1 + 1e-3:
-                safe_x2 = min(safe_x2, ox1)
-        else:
-            dx = (bx1 - ox2) if bx1 >= ox2 else (ox1 - bx2)
-            dy = (by1 - oy2) if by1 >= oy2 else (oy1 - by2)
-            if dx >= dy:
-                if bx1 >= ox2:
-                    safe_x1 = max(safe_x1, ox2)
+        if inter_area > 0:
+            if inter_area / min(b_area, o_area) > 0.15:
+                return None  # Đè lên nhau quá nhiều
+            # Biển cắm chung cột chạm mép nhẹ: cắt ranh giới phân tách
+            if ih <= iw:
+                if by1 < oy1:
+                    safe_y2 = min(safe_y2, max(by1 + 5, oy1))
                 else:
-                    safe_x2 = min(safe_x2, ox1)
+                    safe_y1 = max(safe_y1, min(by2 - 5, oy2))
             else:
-                if by1 >= oy2:
-                    safe_y1 = max(safe_y1, oy2)
+                if bx1 < ox1:
+                    safe_x2 = min(safe_x2, max(bx1 + 5, ox1))
                 else:
-                    safe_y2 = min(safe_y2, oy1)
+                    safe_x1 = max(safe_x1, min(bx2 - 5, ox2))
+        else:
+            if bx1 >= ox2:
+                safe_x1 = max(safe_x1, ox2)
+            elif bx2 <= ox1:
+                safe_x2 = min(safe_x2, ox1)
+            elif by1 >= oy2:
+                safe_y1 = max(safe_y1, oy2)
+            elif by2 <= oy1:
+                safe_y2 = min(safe_y2, oy1)
 
     if safe_x1 <= bx1 + 1e-3 and bx2 - 1e-3 <= safe_x2 and safe_y1 <= by1 + 1e-3 and by2 - 1e-3 <= safe_y2:
         return (safe_x1, safe_y1, safe_x2, safe_y2)
