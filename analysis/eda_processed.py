@@ -7,7 +7,7 @@ Xuất chuẩn 9 biểu đồ lưu tại analysis/figures/processed/:
   04_box_center_heatmap: Mật độ vị trí tâm box trên canvas 640x640
   05_images_per_split: Số lượng ảnh và box theo từng tập Train, Val, Test
   06_tiny_box_candidates: Xác nhận 0% box nhỏ < min_box_px
-  07_data_leakage: Ma trận trùng lặp và khoảng cách Hamming kết hợp dHash (<=380) và pHash (<=18)
+  07_data_leakage: Ma trận trùng lặp và khoảng cách Hamming dHash (<=362)
   08_brightness_sharpness: Đánh giá quang học độ sáng & độ nét phân tách từng tập (layout 3x3)
   09_sample_labels: Demo 9 ảnh mẫu sau tiền xử lý kèm bounding box
 File dữ liệu tổng hợp: analysis/figures/processed/eda_summary.json

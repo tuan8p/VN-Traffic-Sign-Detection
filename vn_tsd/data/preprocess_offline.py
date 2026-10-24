@@ -164,7 +164,6 @@ def preprocess_dataset_offline(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 380,
-    phash_thresh: int | None = None,
     seed: int = 42,
 ) -> Path:
     """Pipeline tiền xử lý offline 5 BƯỚC chuẩn xác:
@@ -211,14 +210,11 @@ def preprocess_dataset_offline(
     print(f"[preprocess]   Đã quét {len(all_img_paths):,} ảnh: loại bỏ {total_dropped_tiny:,} box nhỏ (< {min_box_px}px), giữ lại {total_valid_boxes:,} box hợp lệ.")
 
     # ── BƯỚC 2: Tính gom cụm ──
-    print("[preprocess] ========================================================")
-    ph_str = f" + pHash 64-bit (Hamming <= {phash_thresh})" if phash_thresh else ""
-    print(f"[preprocess] BƯỚC 2: Tính gom cụm bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){ph_str}...")
+    print(f"[preprocess] BƯỚC 2: Tính gom cụm bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh})...")
     cluster_res = cluster_images_dhash(
         all_img_paths,
         hash_size=hash_size,
         hamming_thresh=hamming_thresh,
-        phash_thresh=phash_thresh,
     )
     clusters = cluster_res.get("clusters", {})
     print(f"[preprocess]   Tìm thấy {len(clusters):,} cụm tương đồng bối cảnh từ {len(all_img_paths):,} ảnh thô.")
@@ -481,8 +477,6 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
     )
     hash_sz = int(split_cfg.get("hash_size", 32))
     h_thresh = int(split_cfg.get("hamming_threshold", 380))
-    raw_phash_thresh = split_cfg.get("phash_threshold", None)
-    p_thresh = int(raw_phash_thresh) if (raw_phash_thresh is not None and str(raw_phash_thresh).strip().lower() not in ("none", "false")) else None
 
     d_root = data_root or prep.get("raw_dir", "data/raw")
     out_root = prep.get("processed_dir", "data/processed")
@@ -513,6 +507,5 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
         ratio=ratios,
         hash_size=hash_sz,
         hamming_thresh=h_thresh,
-        phash_thresh=p_thresh,
         seed=seed,
     )

@@ -5,7 +5,7 @@ Xuất chuẩn 8 biểu đồ lưu tại analysis/figures/raw/:
   02_boxes_per_image: Phân bố số lượng box trên mỗi ảnh
   03_box_dimensions: Kích thước box (chiều rộng vs chiều cao và phân loại MS-COCO)
   04_box_center_heatmap: Bản đồ nhiệt mật độ vị trí tâm box
-  05_dhash_clusters: Gom cụm tương đồng bối cảnh bằng dHash 1024-bit + pHash 64-bit
+  05_dhash_clusters: Gom cụm tương đồng bối cảnh bằng dHash 1024-bit
   06_tiny_box_candidates: Khảo sát các box nhỏ < min_box_px
   07_brightness_sharpness: Đánh giá quang học độ sáng & độ sắc nét (layout 2x2)
   08_sample_labels: Demo 9 ảnh mẫu kèm nhãn bounding box
@@ -101,7 +101,6 @@ def analyze_raw_dataset(
         img_paths,
         hash_size=dhash_size,
         hamming_thresh=dhash_hamming,
-        phash_thresh=None,
     )
     plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag="raw")
     summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}

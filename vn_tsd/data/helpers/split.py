@@ -218,7 +218,6 @@ def split_by_dhash_clusters(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 380,
-    phash_thresh: int | None = None,
     min_box_px: int = 8,
     image_size: tuple[int, int] = (640, 640),
     seed: int = 42,
@@ -231,7 +230,6 @@ def split_by_dhash_clusters(
         img_paths,
         hash_size=hash_size,
         hamming_thresh=hamming_thresh,
-        phash_thresh=phash_thresh,
     )
     clusters = cluster_res.get("clusters", {})
     all_stems = [p.stem for p in img_paths]
