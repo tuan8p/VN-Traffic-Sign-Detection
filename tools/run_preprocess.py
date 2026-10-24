@@ -27,7 +27,7 @@ def main(argv=None) -> None:
     p.add_argument("--dhash-size", type=int, default=None, help="Kích thước dHash (mặc định lấy từ shared.yaml: 32)")
     p.add_argument("--dhash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming gom cụm (mặc định lấy từ shared.yaml: 370)")
     p.add_argument("--phash-hamming", type=int, default=None, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (mặc định lấy từ shared.yaml: 10)")
-    p.add_argument("--target-boxes", default=None, help="Ngưỡng box mục tiêu mỗi class trong train (mặc định lấy từ shared.yaml: 'max' để bằng class cao nhất)")
+    p.add_argument("--target-boxes", default=None, help="Ngưỡng box mục tiêu mỗi class trong train (mặc định lấy từ shared.yaml: 'adaptive' cho tỷ lệ 1.5-3x)")
     args = p.parse_args(argv)
 
     cfg = resolve_config(

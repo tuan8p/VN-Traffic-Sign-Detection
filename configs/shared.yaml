@@ -37,7 +37,7 @@ preprocess:
   # augmentation that does not mirror sign classes.
   hflip: false
   augment_minority: true
-  minority_target_boxes: max # Cân bằng tất cả các class trong train bằng class cao nhất (isolated crop + blur/rotate/zoom)
+  minority_target_boxes: adaptive # Tăng tỷ lệ theo số mẫu: ít mẫu tăng ~2-3x, trung bình tăng ~1.5-2x, nhiều mẫu 1x
 
 split:
   ratios: { train: 0.7, val: 0.15, test: 0.15 }
