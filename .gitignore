@@ -238,4 +238,3 @@ runs/
 !.env.example
 .venv/
 venv/
-analysis/cluster_viewer_gui.py
