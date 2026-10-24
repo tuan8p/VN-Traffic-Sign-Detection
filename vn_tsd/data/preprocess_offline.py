@@ -194,9 +194,9 @@ def preprocess_dataset_offline(
 
     # ── BƯỚC 1 & 2: Phân cụm dHash trực tiếp từ ảnh và chia split theo cụm (không dùng split có sẵn) ──
     print("[preprocess] ========================================================")
-    print(f"[preprocess] BƯỚC 1: Phân cụm toàn bộ ảnh thô bằng dHash (size={hash_size}, Hamming <= {hamming_thresh})...")
-    print(f"[preprocess] BƯỚC 2: Phân chia các cụm vào Train, Val, Test theo tỉ lệ ({ratio[0]*100:.0f}/{ratio[1]*100:.0f}/{ratio[2]*100:.0f})...")
-    print("[preprocess]         QUY TẮC: Mọi ảnh trong cùng 1 cụm PHẢI thuộc cùng 1 tập (không chia rẽ cụm)!")
+    print(f"[preprocess] BƯỚC 1: Phân cụm toàn bộ ảnh thô bằng dHash (size={hash_size}, Hamming <= {hamming_thresh}) + pHash...")
+    print(f"[preprocess] BƯỚC 2: Phân chia cụm vào Train/Val/Test (lọc box < {min_box_px}px, đảm bảo đủ 52/52 lớp)...")
+    print("[preprocess]         QUY TẮC: Mọi ảnh trong cùng 1 cụm PHẢI thuộc cùng 1 tập (100% Cluster Isolation)!")
     print("[preprocess] ========================================================")
 
     splits = split_by_dhash_clusters(
@@ -255,7 +255,8 @@ def preprocess_dataset_offline(
     total_kept = 0
     total_dropped_tiny = 0
 
-    # ── Xử lý letterbox và lọc box nhỏ trên từng split ──
+    # ── BƯỚC 3: Xử lý letterbox và lọc box nhỏ trên từng split ──
+    print(f"\n[preprocess] BƯỚC 3: Chuẩn hoá kích thước (Letterbox {image_size[0]}×{image_size[1]}, pad={pad_value}) & lọc bỏ box < {min_box_px}px...")
     for sname, stems in splits.items():
         dst_img_dir = out_root / "images" / sname
         dst_lbl_dir = out_root / "labels" / sname
@@ -297,8 +298,9 @@ def preprocess_dataset_offline(
         total_dropped_tiny += n_tiny_dropped
         print(f"[preprocess]   {sname}: {len(stems)} ảnh, {n_boxes_out}/{n_boxes_in} box giữ lại ({n_tiny_dropped} tiny bỏ)")
 
-    # ── Tăng cường dữ liệu cho các lớp thiểu số trong tập train (nếu bật) ──
+    # ── BƯỚC 4: Tăng cường dữ liệu cho các lớp thiểu số trong tập train (nếu bật) ──
     if augment_minority and "train" in splits:
+        print(f"\n[preprocess] BƯỚC 4: Cân bằng nhãn thiểu số (Data Augmentation) cho tập Train (max 7 ảnh/lớp, blur nhẹ, không xoay)...")
         # Tiền tính toán mã dHash của val và test để kiểm tra rò rỉ trong quá trình sinh ảnh augmented
         val_test_hashes = []
         for s in ("val", "test"):
@@ -330,8 +332,8 @@ def preprocess_dataset_offline(
     meta["total_boxes_kept"] = total_kept
     meta["elapsed_seconds"] = round(elapsed, 2)
 
-
-    # ── Ghi data.yaml và meta.json ──
+    # ── BƯỚC 5: Ghi data.yaml và meta.json ──
+    print(f"\n[preprocess] BƯỚC 5: Ghi cấu hình huấn luyện data.yaml & lưu metadata meta.json...")
     _write_data_yaml(out_root, classes)
     print(f"[preprocess] data.yaml ghi tại: {out_root / 'data.yaml'}")
 

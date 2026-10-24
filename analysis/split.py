@@ -86,7 +86,7 @@ def split_by_dhash_clusters(
         return {"train": [], "val": [], "test": []}
 
     phash_str = f" + pHash 64-bit (Hamming <= {phash_thresh})" if phash_thresh else ""
-    print(f"[split] Bước 1: Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){phash_str}...")
+    print(f"[split] - Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){phash_str}...")
     cluster_res = cluster_images_dhash(
         img_paths,
         hash_size=hash_size,
@@ -113,7 +113,7 @@ def split_by_dhash_clusters(
     stem_to_path = {p.stem: p for p in img_paths}
 
     # Đọc nhãn sau khi loại bỏ tiny box (< min_box_px) TRƯỚC khi gom cụm / tính phân bố lớp
-    print(f"[split] Lọc bỏ box tiny (< {min_box_px}px) trước khi xác định phân bố lớp của các cụm...")
+    print(f"[split] - Lọc bỏ box tiny (< {min_box_px}px) trước khi xác định phân bố lớp của các cụm...")
     stem_to_classes = _read_labels_for_stems(
         lbl_dir=lbl_dir,
         stems=all_stems,
@@ -123,7 +123,7 @@ def split_by_dhash_clusters(
     )
 
     # Đo kiểm quang học nhanh để cân bằng ảnh tối & mờ
-    print("[split] Bước 2: Khảo sát độ sáng và độ mờ để cân bằng quang học...")
+    print("[split] - Khảo sát độ sáng và độ mờ để cân bằng quang học...")
 
     stem_to_path = {p.stem: p for p in img_paths}
     stem_quality: dict[str, dict[str, bool]] = {}
