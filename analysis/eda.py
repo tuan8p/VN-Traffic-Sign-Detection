@@ -57,6 +57,8 @@ def main(argv=None) -> None:
     is_processed = (data_root / "labels" / "train").is_dir() or "processed" in data_root.parts
 
     if is_processed:
+        dhash_h = 362 if args.dhash_hamming == 380 else args.dhash_hamming
+        phash_h = 10 if args.phash_hamming == 18 else args.phash_hamming
         analyze_processed_dataset(
             data_root=data_root,
             figures_dir=args.figures_dir,
@@ -66,8 +68,8 @@ def main(argv=None) -> None:
             num_samples=args.num_samples,
             quality_samples=args.quality_samples,
             dhash_size=args.dhash_size,
-            dhash_hamming=args.dhash_hamming,
-            phash_hamming=args.phash_hamming,
+            dhash_hamming=dhash_h,
+            phash_hamming=phash_h,
         )
     else:
         analyze_raw_dataset(

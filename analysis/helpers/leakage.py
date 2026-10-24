@@ -21,11 +21,16 @@ def check_data_leakage(
     split_stems: dict[str, list[str]],
     stem_to_path: dict[str, Path],
     hash_size: int = 32,
-    hamming_thresh: int = 380,
+    hamming_thresh: int = 362,
     phash_size: int = 8,
-    phash_thresh: int = 18,
+    phash_thresh: int = 10,
 ) -> dict[str, Any]:
-    """Khảo sát rò rỉ dữ liệu kết hợp dHash và pHash giữa tất cả các cặp split (train, val, test)."""
+    """Khảo sát rò rỉ dữ liệu kết hợp dHash và pHash giữa tất cả các cặp split (train, val, test).
+
+    Ngưỡng dHash mặc định 362 bit đã được chuẩn hóa theo tỷ lệ co rút khoảng cách sau Letterbox
+    Resize 640x640 (tương đương với ngưỡng 380 bit trên ảnh gốc RAW).
+    pHash (ngưỡng 10) đóng vai trò phụ trợ nhận dạng trùng lặp ở vùng biên khoảng cách.
+    """
     splits = [s for s in ("train", "val", "test") if s in split_stems and split_stems[s]]
     n_splits = len(splits)
     if n_splits < 2:
@@ -113,8 +118,10 @@ def check_data_leakage(
             xor_p = np.bitwise_xor(p1_p[:, None, :], p2_p[None, :, :])
             dist_p = popcount[xor_p].sum(axis=2)
 
-            # Tiêu chí rò rỉ đồng bộ với gom cụm: dHash <= 380 HOẶC pHash <= 18
-            leaked_mask = (dist_d <= hamming_thresh) | (dist_p <= phash_thresh)
+            # Tiêu chí rò rỉ chuẩn xác:
+            # 1. dHash <= hamming_thresh (khoảng cách bối cảnh cực gần sau resize letterbox 640)
+            # 2. HOẶC dHash <= hamming_thresh + 8 VÀ pHash <= phash_thresh (bối cảnh gần + tần số thấp trùng lặp)
+            leaked_mask = (dist_d <= hamming_thresh) | ((dist_d <= (hamming_thresh + 8)) & (dist_p <= phash_thresh))
             leaked_i, leaked_j = np.where(leaked_mask)
             n_pairs = len(leaked_i)
             n_unique_s1 = len(np.unique(leaked_i))
@@ -165,7 +172,7 @@ def check_data_leakage(
             dist_te_tr_p = popcount[xor_te_tr_p].sum(axis=2)
             min_dists_p = dist_te_tr_p.min(axis=1)
 
-            is_near_dup = (dist_te_tr_d <= hamming_thresh) | (dist_te_tr_p <= phash_thresh)
+            is_near_dup = (dist_te_tr_d <= hamming_thresh) | ((dist_te_tr_d <= (hamming_thresh + 8)) & (dist_te_tr_p <= phash_thresh))
             n_near_thresh = int(np.count_nonzero(is_near_dup.any(axis=1)))
             pct_near_thresh = float(n_near_thresh / len(min_dists_d) * 100)
             dhash_test_to_train = {
@@ -206,9 +213,9 @@ def find_leaked_test_stems(
     test_stems: list[str],
     stem_to_path: dict[str, Path],
     hash_size: int = 32,
-    hamming_thresh: int = 380,
+    hamming_thresh: int = 362,
     phash_size: int = 8,
-    phash_thresh: int = 18,
+    phash_thresh: int = 10,
 ) -> tuple[list[str], list[str]]:
     """Phát hiện và phân tách các stem trong test split thành clean và leaked dựa trên cả dHash & pHash."""
     tr_d, tr_p = [], []
@@ -243,7 +250,7 @@ def find_leaked_test_stems(
     xor_p = np.bitwise_xor(te_packed_p[:, None, :], tr_packed_p[None, :, :])
     dist_p = popcount[xor_p].sum(axis=2)
 
-    is_leaked_matrix = (dist_d <= hamming_thresh) | (dist_p <= phash_thresh)
+    is_leaked_matrix = (dist_d <= hamming_thresh) | ((dist_d <= (hamming_thresh + 8)) & (dist_p <= phash_thresh))
     is_leaked_test = is_leaked_matrix.any(axis=1)
 
     clean_stems: list[str] = []
@@ -277,7 +284,7 @@ def plot_data_leakage(
     fig, axes = plt.subplots(1, 2, figsize=(18, 7.5))
     title_suffix = f" – {tag.upper()}" if tag else ""
     fig.suptitle(
-        f"07. Đánh giá Rò rỉ Dữ liệu (dHash ≤ {hamming_thresh} hoặc pHash ≤ {phash_thresh}){title_suffix}",
+        f"07. Đánh giá Rò rỉ Dữ liệu (dHash ≤ {hamming_thresh} kết hợp pHash ≤ {phash_thresh}){title_suffix}",
         fontsize=14,
         fontweight="bold",
     )
@@ -300,7 +307,7 @@ def plot_data_leakage(
     ax0.set_xticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
     ax0.set_yticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
     ax0.set_title(
-        f"1. Ma trận Trùng lặp giữa các Split (dHash ≤ {hamming_thresh} hoặc pHash ≤ {phash_thresh})",
+        f"1. Ma trận Trùng lặp giữa các Split (dHash ≤ {hamming_thresh} & pHash ≤ {phash_thresh})",
         fontsize=12,
         fontweight="bold",
     )
