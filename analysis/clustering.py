@@ -150,8 +150,8 @@ def cluster_images_dhash(
 
         final_raw_groups = [[valid_stems[idx] for idx in group] for group in merged_clusters.values()]
         print(
-            f"[cluster] dHash (Hamming ≤ {hamming_thresh}): {initial_cluster_count} cụm  →  "
-            f"pHash gộp (Hamming ≤ {phash_thresh}): giảm {clusters_merged_by_phash} cụm  →  "
+            f"[cluster] dHash (Hamming <= {hamming_thresh}): {initial_cluster_count} cụm  →  "
+            f"pHash gộp (Hamming <= {phash_thresh}): giảm {clusters_merged_by_phash} cụm  →  "
             f"Còn lại {len(final_raw_groups)} cụm."
         )
     else:

@@ -159,7 +159,7 @@ def preprocess_dataset_offline(
     min_box_px: int = 8,
     pad_value: int = 114,
     augment_minority: bool = True,
-    minority_target_boxes: int | str = "max",
+    minority_target_boxes: int | str = "adaptive",
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 370,
@@ -394,14 +394,16 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
     min_box_px = int(prep.get("min_box_px", 8))
     pad_val = int(prep.get("pad_value", 114))
     aug_min = bool(prep.get("augment_minority", cfg.get("augment_minority", True)))
-    raw_aug_target = prep.get("minority_target_boxes", cfg.get("minority_target_boxes", "max"))
-    if raw_aug_target is None or str(raw_aug_target).strip().lower() in ("max", "-1", "none"):
-        aug_target: int | str = "max"
+    raw_aug_target = prep.get("minority_target_boxes", cfg.get("minority_target_boxes", "adaptive"))
+    if raw_aug_target is None or str(raw_aug_target).strip().lower() in ("adaptive", "ratio", "tier", "multiplier"):
+        aug_target: int | str = "adaptive"
+    elif str(raw_aug_target).strip().lower() in ("max", "-1", "none"):
+        aug_target = "max"
     else:
         try:
             aug_target = int(raw_aug_target)
         except (ValueError, TypeError):
-            aug_target = "max"
+            aug_target = "adaptive"
     seed = int(cfg.get("seed", 42))
 
     return preprocess_dataset_offline(

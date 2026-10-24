@@ -8,7 +8,12 @@ Cơ chế thực hiện:
     + Xoay nhiều góc (Multi-angle rotation: -25° đến +25°)
     + Zoom in / Zoom out (scale 0.75 đến 1.35)
     + Tinh chỉnh độ sáng / tương phản nhẹ
-  - Cân bằng tất cả các class trong tập Train bằng class cao nhất (mặc định target_min_boxes="max").
+  - Tăng cường dữ liệu thích ứng (adaptive multiplier policy):
+    + Class ít mẫu (< 30 box): Tăng khoảng 2–3 lần (mặc định ~2.5x).
+    + Class trung bình (30–150 box): Tăng khoảng 1.5–2 lần (mặc định ~1.75x).
+    + Class nhiều mẫu (> 150 box): Giữ nguyên (1.0x).
+  - Chọn ngẫu nhiên ảnh trong tập ứng viên đa dạng của class trong Train để áp dụng phép biến đổi,
+    đảm bảo phân bổ đều qua các ảnh khác nhau thay vì lặp lại trên 1 ảnh.
   - Đặt vào canvas kích thước chuẩn (mặc định 640x640) với letterbox padding.
   - Tự động lọc bỏ các bounding box siêu nhỏ (< min_box_px, mặc định 8px).
   - Kiểm tra đối chiếu mã dHash với toàn bộ ảnh Validation và Test để ngăn chặn rò rỉ dữ liệu.
@@ -244,13 +249,21 @@ def augment_minority_classes(
     train_img_dir: Path,
     train_lbl_dir: Path,
     val_test_packed: np.ndarray | None = None,
-    target_min_boxes: int | str | None = "max",
+    target_min_boxes: int | str | None = "adaptive",
     image_size: tuple[int, int] = (640, 640),
     min_box_px: int = 8,
     pad_value: int = 114,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Cân bằng dữ liệu cho các lớp trong tập Train bằng cô lập biển báo và biến đổi ảnh."""
+    """Cân bằng dữ liệu cho các lớp trong tập Train bằng cô lập biển báo và biến đổi ảnh.
+    
+    Quy tắc tăng cường:
+      - Class ít mẫu (< 30 box): Tăng khoảng 2-3 lần (mặc định 2.5x).
+      - Class có số mẫu trung bình (30 - 150 box): Tăng khoảng 1.5-2 lần (mặc định 1.75x).
+      - Class nhiều mẫu (> 150 box): Giữ nguyên (1.0x).
+      - Chọn ngẫu nhiên ảnh trong tập ứng viên của class để áp dụng biến đổi,
+        phân bổ đều qua các ảnh khác nhau trong class trước khi lặp lại.
+    """
     rng = random.Random(seed)
     if not train_img_dir.is_dir() or not train_lbl_dir.is_dir():
         return {"n_augmented_images": 0, "n_augmented_boxes": 0}
@@ -278,25 +291,43 @@ def augment_minority_classes(
     if not class_counts:
         return {"n_augmented_images": 0, "n_augmented_boxes": 0}
 
-    # Xác định ngưỡng target_boxes
-    max_count = max(class_counts.values())
-    if target_min_boxes is None or str(target_min_boxes).strip().lower() in ("max", "-1", "none"):
-        target_boxes = max_count
-    else:
-        target_boxes = int(target_min_boxes)
+    # Xác định số box mục tiêu cho từng class
+    class_targets: dict[int, int] = {}
+    policy_str = str(target_min_boxes).strip().lower() if target_min_boxes is not None else "adaptive"
 
-    classes_to_augment = {c: cnt for c, cnt in class_counts.items() if cnt < target_boxes}
-    if not classes_to_augment:
-        print(f"[augment] Tất cả các lớp trong train đã đạt mục tiêu ({target_boxes} box), không cần augment.")
+    if policy_str in ("adaptive", "ratio", "tier", "multiplier"):
+        for cid, cnt in class_counts.items():
+            if cnt < 30:
+                # Class ít mẫu: tăng khoảng 2-3 lần (2.5x)
+                target_cnt = max(int(round(cnt * 2.5)), min(15, cnt * 3))
+            elif cnt <= 150:
+                # Class trung bình: tăng khoảng 1.5-2 lần (1.75x)
+                target_cnt = int(round(cnt * 1.75))
+            else:
+                # Class nhiều mẫu: giữ nguyên 1.0x
+                target_cnt = cnt
+            class_targets[cid] = target_cnt
+    elif policy_str in ("max", "-1", "none"):
+        max_count = max(class_counts.values())
+        for cid in class_counts:
+            class_targets[cid] = max_count
+    else:
+        fixed_target = int(target_min_boxes)
+        for cid, cnt in class_counts.items():
+            class_targets[cid] = max(cnt, fixed_target)
+
+    class_needed = {c: class_targets[c] - class_counts[c] for c in class_counts if class_targets[c] > class_counts[c]}
+    if not class_needed:
+        print("[augment] Tất cả các lớp trong train đã đạt mục tiêu, không cần augment.")
         return {"n_augmented_images": 0, "n_augmented_boxes": 0}
 
-    total_needed = sum(target_boxes - cnt for cnt in classes_to_augment.values())
+    total_needed = sum(class_needed.values())
     print(
-        f"[augment] Bắt đầu cân bằng {len(classes_to_augment)} lớp trong Train lên mức {target_boxes} box "
-        f"(bằng class cao nhất). Cần sinh thêm ~{total_needed:,} box..."
+        f"[augment] Bắt đầu tăng cường cho {len(class_needed)} lớp trong Train (chính sách: {policy_str}). "
+        f"Cần sinh thêm ~{total_needed:,} box..."
     )
     print(
-        "[augment]   Phương pháp: Cắt biển báo + khung cảnh cô lập (không lẫn class khác) "
+        "[augment]   Cơ chế: Chọn ảnh ngẫu nhiên từ tập ứng viên đa dạng -> Cắt biển báo + bối cảnh an toàn "
         "-> Xoay nhiều góc, Zoom in/out, Làm mờ -> Đưa về canvas 640x640."
     )
 
@@ -320,21 +351,29 @@ def augment_minority_classes(
     t_start = time.time()
 
     # Sắp xếp augment các class từ ít nhất đến nhiều nhất
-    sorted_classes = sorted(classes_to_augment.items(), key=lambda x: x[1])
+    sorted_classes = sorted(class_needed.items(), key=lambda x: class_counts[x[0]])
+    stem_aug_count: Counter[str] = Counter()
 
-    for cid, current_cnt in sorted_classes:
-        needed = target_boxes - current_cnt
+    for cid, needed in sorted_classes:
         candidates = class_candidates.get(cid, [])
         if not candidates:
             print(f"[augment]   Cảnh báo: Không tìm thấy mẫu cô lập hợp lệ cho Class {cid}, bỏ qua.")
             continue
 
         c_created = 0
-        cand_idx = 0
+        candidate_pool: list[tuple[str, tuple[int, float, float, float, float], tuple[float, float, float, float]]] = []
+        attempts_total = 0
+        max_attempts_class = max(needed * 30, 200)
 
-        while c_created < needed:
-            stem, target_b, safe_bounds = candidates[cand_idx % len(candidates)]
-            cand_idx += 1
+        while c_created < needed and attempts_total < max_attempts_class:
+            if not candidate_pool:
+                # Xáo trộn ngẫu nhiên toàn bộ danh sách ảnh ứng viên khác nhau của class
+                candidate_pool = list(candidates)
+                rng.shuffle(candidate_pool)
+
+            # Rút ngẫu nhiên một ảnh ứng viên khác nhau từ pool
+            stem, target_b, safe_bounds = candidate_pool.pop()
+            attempts_total += 1
 
             src_img = get_img(stem)
             if src_img is None:
@@ -375,14 +414,15 @@ def augment_minority_classes(
             n_augmented_images += 1
             n_augmented_boxes += 1
 
-            aug_stem = f"{stem}_c{cid}_aug{c_created}"
+            stem_aug_count[stem] += 1
+            aug_stem = f"{stem}_c{cid}_aug{stem_aug_count[stem]}"
             dst_img = train_img_dir / f"{aug_stem}.jpg"
             dst_lbl = train_lbl_dir / f"{aug_stem}.txt"
 
             cv2.imwrite(str(dst_img), canvas, [cv2.IMWRITE_JPEG_QUALITY, 90])
             _write_labels(dst_lbl, [final_box])
 
-            if n_augmented_images % 2000 == 0:
+            if n_augmented_images % 1000 == 0:
                 elapsed = time.time() - t_start
                 rate = n_augmented_images / elapsed if elapsed > 0 else 0
                 print(f"[augment]   Đã sinh {n_augmented_images:,}/{total_needed:,} ảnh ({rate:.1f} ảnh/s)...")
@@ -390,13 +430,13 @@ def augment_minority_classes(
     elapsed_total = time.time() - t_start
     print(
         f"[augment]   Hoàn tất: Đã sinh thêm {n_augmented_images:,} ảnh và {n_augmented_boxes:,} box "
-        f"cho {len(classes_to_augment)} lớp trong tập train ({elapsed_total:.1f}s)."
+        f"cho {len(class_needed)} lớp trong tập train ({elapsed_total:.1f}s)."
     )
-    print(f"[augment]   Toàn bộ 52 lớp trong tập Train hiện tại đều đạt đúng {target_boxes} box!")
 
     return {
         "n_augmented_images": n_augmented_images,
         "n_augmented_boxes": n_augmented_boxes,
-        "minority_classes_augmented": list(classes_to_augment.keys()),
-        "target_boxes": target_boxes,
+        "minority_classes_augmented": list(class_needed.keys()),
+        "target_boxes": policy_str,
     }
+
