@@ -47,7 +47,6 @@ import numpy as np
 from PIL import Image
 
 from analysis.image_utils import calculate_dhash
-from analysis.leakage import find_leaked_test_stems
 from analysis.split import split_by_dhash_clusters
 from vn_tsd.data.augmentation import augment_minority_classes, _read_raw_labels, _write_labels
 
@@ -207,6 +206,8 @@ def preprocess_dataset_offline(
         hash_size=hash_size,
         hamming_thresh=hamming_thresh,
         phash_thresh=phash_thresh,
+        min_box_px=min_box_px,
+        image_size=image_size,
         seed=seed,
     )
 
@@ -329,36 +330,6 @@ def preprocess_dataset_offline(
     meta["total_boxes_kept"] = total_kept
     meta["elapsed_seconds"] = round(elapsed, 2)
 
-    # ── Khảo sát rò rỉ dữ liệu Test vs Train và ghi test_clean_files.txt ──
-    train_stems_processed = [p.stem for p in (out_root / "images" / "train").glob("*.jpg")]
-    test_stems_processed = [p.stem for p in (out_root / "images" / "test").glob("*.jpg")]
-    proc_stem_to_path = {p.stem: p for p in out_root.glob("images/*/*.jpg")}
-
-    clean_test, leaked_test = find_leaked_test_stems(
-        train_stems=train_stems_processed,
-        test_stems=test_stems_processed,
-        stem_to_path=proc_stem_to_path,
-        hash_size=hash_size,
-        hamming_thresh=hamming_thresh,
-    )
-
-    clean_file = out_root / "test_clean_files.txt"
-    leak_file = out_root / "test_leaked_files.txt"
-    with open(clean_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(clean_test) + "\n")
-    with open(leak_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(leaked_test) + "\n")
-
-    meta["leakage_analysis"] = {
-        "total_test": len(test_stems_processed),
-        "clean_test_count": len(clean_test),
-        "leaked_test_count": len(leaked_test),
-        "leaked_pct": round(len(leaked_test) / max(len(test_stems_processed), 1) * 100, 2),
-        "status": "PASSED" if not leaked_test else "LEAK_DETECTED",
-    }
-    print(f"[preprocess] Kiểm tra Data Leakage (dHash size={hash_size}, Hamming ≤ {hamming_thresh}): {len(leaked_test)}/{len(test_stems_processed)} ảnh rò rỉ.")
-    print(f"[preprocess]   Ghi danh sách test sạch : {clean_file}")
-    print(f"[preprocess]   Ghi danh sách rò rỉ     : {leak_file}")
 
     # ── Ghi data.yaml và meta.json ──
     _write_data_yaml(out_root, classes)
