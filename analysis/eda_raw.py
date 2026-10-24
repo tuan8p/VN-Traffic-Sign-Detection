@@ -9,7 +9,7 @@ Xuất chuẩn 8 biểu đồ lưu tại analysis/figures/raw/:
   06_tiny_box_candidates: Khảo sát các box nhỏ < min_box_px
   07_brightness_sharpness: Đánh giá quang học độ sáng & độ sắc nét (layout 2x2)
   08_sample_labels: Demo 9 ảnh mẫu kèm nhãn bounding box
-File dữ liệu tổng hợp: analysis/figures/raw/eda_summary.json và dhash_clusters.json
+File dữ liệu tổng hợp: analysis/figures/raw/eda_summary.json
 """
 from __future__ import annotations
 
@@ -104,8 +104,6 @@ def analyze_raw_dataset(
     )
     plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag="raw")
     summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}
-    with open(target_dir / "dhash_clusters.json", "w", encoding="utf-8") as f:
-        json.dump(cluster_res, f, ensure_ascii=False, indent=2)
 
     # 06. Tiny box candidates
     print("\n[EDA Raw] 06 Tiny box candidates...")
