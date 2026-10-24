@@ -152,6 +152,165 @@ def _filter_tiny_boxes(
     return clean_boxes, total_in, total_dropped
 
 
+def _consolidate_post_resize_leakage(
+    out_root: Path,
+    hamming_thresh: int = 380,
+    hash_size: int = 32,
+) -> dict[str, Any]:
+    """Kiểm tra rò rỉ dữ liệu sau resize và dồn tập triệt để:
+      - Nếu rò rỉ giữa (val hoặc test) với train -> dồn sang train.
+      - Nếu rò rỉ giữa val với test -> dồn sang val.
+    """
+    img_base = out_root / "images"
+    lbl_base = out_root / "labels"
+    splits = ["train", "val", "test"]
+
+    img_split: dict[str, str] = {}
+    hashes: dict[str, np.ndarray] = {}
+
+    for s in splits:
+        s_img_dir = img_base / s
+        if not s_img_dir.is_dir():
+            continue
+        for p in sorted(s_img_dir.glob("*.jpg")):
+            img_split[p.name] = s
+            h = calculate_dhash(p, hash_size=hash_size, strip_padding=True)
+            if h is not None:
+                hashes[p.name] = np.packbits(h)
+
+    popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
+    names = list(hashes.keys())
+    if not names:
+        return {
+            "moved_to_train": [],
+            "moved_to_val": [],
+            "split_stats": {s: {"n_images": 0, "n_boxes_out": 0} for s in splits},
+            "total_boxes_kept": 0,
+            "remaining_leaks": {"train_vs_val": 0, "train_vs_test": 0, "val_vs_test": 0},
+        }
+
+    packed_matrix = np.array([hashes[n] for n in names], dtype=np.uint8)
+
+    # Xây dựng đồ thị các cặp ảnh rò rỉ (khoảng cách <= hamming_thresh)
+    adj: dict[str, list[str]] = {n: [] for n in names}
+    for i in range(len(names)):
+        diff = np.bitwise_xor(packed_matrix[i + 1:], packed_matrix[i])
+        dists = popcount[diff].sum(axis=1)
+        matches = np.where(dists <= hamming_thresh)[0]
+        for m in matches:
+            j = i + 1 + m
+            adj[names[i]].append(names[j])
+            adj[names[j]].append(names[i])
+
+    current_split = dict(img_split)
+
+    # 1. Dồn về Train: Bất kỳ ảnh nào trong val/test rò rỉ trực tiếp hoặc bắc cầu với train
+    train_queue = [n for n, s in current_split.items() if s == "train"]
+    visited_train = set(train_queue)
+    moved_to_train: list[tuple[str, str, str]] = []
+    head = 0
+    while head < len(train_queue):
+        curr = train_queue[head]
+        head += 1
+        for neighbor in adj[curr]:
+            if neighbor not in visited_train:
+                visited_train.add(neighbor)
+                train_queue.append(neighbor)
+                if current_split[neighbor] != "train":
+                    moved_to_train.append((neighbor, current_split[neighbor], "train"))
+                    current_split[neighbor] = "train"
+
+    # 2. Dồn về Val: Bất kỳ ảnh nào còn lại trong test rò rỉ trực tiếp hoặc bắc cầu với val
+    val_queue = [n for n, s in current_split.items() if s == "val"]
+    visited_val = set(val_queue)
+    moved_to_val: list[tuple[str, str, str]] = []
+    head = 0
+    while head < len(val_queue):
+        curr = val_queue[head]
+        head += 1
+        for neighbor in adj[curr]:
+            if current_split[neighbor] == "test":
+                moved_to_val.append((neighbor, "test", "val"))
+                current_split[neighbor] = "val"
+                if neighbor not in visited_val:
+                    visited_val.add(neighbor)
+                    val_queue.append(neighbor)
+
+    # Thực hiện di chuyển file trên đĩa
+    for name, src_s, dst_s in moved_to_train + moved_to_val:
+        stem = Path(name).stem
+        src_img = img_base / src_s / name
+        dst_img = img_base / dst_s / name
+        if src_img.exists():
+            shutil.move(src_img, dst_img)
+
+        src_lbl = lbl_base / src_s / f"{stem}.txt"
+        dst_lbl = lbl_base / dst_s / f"{stem}.txt"
+        if src_lbl.exists():
+            shutil.move(src_lbl, dst_lbl)
+
+    # Cập nhật các file danh sách split
+    split_save_dir = out_root / "split_files"
+    split_save_dir.mkdir(parents=True, exist_ok=True)
+    for sname in splits:
+        s_files = sorted([n for n, sp in current_split.items() if sp == sname])
+        lines = [f"{n}\n" for n in s_files]
+        with open(split_save_dir / f"{sname}.txt", "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        with open(out_root / f"{sname}_files.txt", "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    # Kiểm tra lại lần cuối để bảo đảm 0 rò rỉ
+    def _count_cross_leaks(list1: list[str], list2: list[str]) -> int:
+        if not list1 or not list2:
+            return 0
+        mat1 = np.array([hashes[n] for n in list1], dtype=np.uint8)
+        mat2 = np.array([hashes[n] for n in list2], dtype=np.uint8)
+        cnt = 0
+        for idx in range(len(list1)):
+            diff = np.bitwise_xor(mat2, mat1[idx])
+            dists = popcount[diff].sum(axis=1)
+            cnt += int(np.sum(dists <= hamming_thresh))
+        return cnt
+
+    final_tr = [n for n, s in current_split.items() if s == "train"]
+    final_va = [n for n, s in current_split.items() if s == "val"]
+    final_te = [n for n, s in current_split.items() if s == "test"]
+
+    tr_va_leaks = _count_cross_leaks(final_tr, final_va)
+    tr_te_leaks = _count_cross_leaks(final_tr, final_te)
+    va_te_leaks = _count_cross_leaks(final_va, final_te)
+
+    # Đếm số lượng ảnh và box thực tế của từng split
+    split_stats: dict[str, dict[str, int]] = {}
+    total_kept = 0
+    for sname in splits:
+        s_imgs = list((img_base / sname).glob("*.jpg"))
+        n_boxes = 0
+        for p in s_imgs:
+            lbl_p = lbl_base / sname / f"{p.stem}.txt"
+            if lbl_p.exists():
+                with open(lbl_p, "r", encoding="utf-8") as f:
+                    n_boxes += sum(1 for line in f if line.strip())
+        split_stats[sname] = {
+            "n_images": len(s_imgs),
+            "n_boxes_out": n_boxes,
+        }
+        total_kept += n_boxes
+
+    return {
+        "moved_to_train": moved_to_train,
+        "moved_to_val": moved_to_val,
+        "split_stats": split_stats,
+        "total_boxes_kept": total_kept,
+        "remaining_leaks": {
+            "train_vs_val": tr_va_leaks,
+            "train_vs_test": tr_te_leaks,
+            "val_vs_test": va_te_leaks,
+        },
+    }
+
+
 def preprocess_dataset_offline(
     data_root: str | Path = "data/raw",
     out_root: str | Path = "data/processed",
@@ -166,12 +325,13 @@ def preprocess_dataset_offline(
     hamming_thresh: int = 380,
     seed: int = 42,
 ) -> Path:
-    """Pipeline tiền xử lý offline 5 BƯỚC chuẩn xác:
+    """Pipeline tiền xử lý offline 6 BƯỚC chuẩn xác:
       B1: Xóa các box nhỏ (< min_box_px)
       B2: Tính gom cụm bằng dHash thuần túy và chia
       B3: Đảm bảo train luôn có đầy đủ class (52/52 lớp, 100% Cluster Isolation)
       B4: Tạo augment trong train (cân bằng nhãn thiểu số)
-      B5: Resize ảnh (Letterbox 640x640) & xuất data.yaml, meta.json
+      B5: Resize ảnh (Letterbox 640x640)
+      B6: Kiểm tra rò rỉ sau resize (dHash <= hamming_thresh) và dồn tập triệt để & xuất data.yaml, meta.json
     """
     data_root = Path(data_root)
     out_root = Path(out_root)
@@ -362,7 +522,7 @@ def preprocess_dataset_offline(
                         packed_aug = np.packbits(h_aug)
                         diff = np.bitwise_xor(val_test_packed, packed_aug)
                         dists = popcount[diff].sum(axis=1)
-                        if dists.min() <= 374:
+                        if dists.min() <= hamming_thresh:
                             continue
 
                 gen += 1
@@ -445,6 +605,35 @@ def preprocess_dataset_offline(
         meta["minority_augmentation"] = aug_stats
         total_kept += len(aug_items)
         print(f"[preprocess]   train (+augmented): {meta['splits']['train']['n_images']} ảnh tổng cộng ({len(aug_items)} ảnh augmented).")
+
+    # ── BƯỚC 6: Kiểm tra rò rỉ dữ liệu sau resize và dồn tập triệt để ──
+    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 6: Kiểm tra rò rỉ dữ liệu sau resize (dHash <= {hamming_thresh}) và dồn tập triệt để...")
+    consolidation_res = _consolidate_post_resize_leakage(
+        out_root=out_root,
+        hamming_thresh=hamming_thresh,
+        hash_size=hash_size,
+    )
+    moved_tr = consolidation_res["moved_to_train"]
+    moved_va = consolidation_res["moved_to_val"]
+    n_from_val_to_tr = sum(1 for _, src, _ in moved_tr if src == "val")
+    n_from_te_to_tr = sum(1 for _, src, _ in moved_tr if src == "test")
+    print(f"[preprocess]   Dồn về Train: {len(moved_tr)} ảnh ({n_from_val_to_tr} từ Val, {n_from_te_to_tr} từ Test).")
+    print(f"[preprocess]   Dồn về Val  : {len(moved_va)} ảnh ({len(moved_va)} từ Test).")
+
+    meta["splits"] = consolidation_res["split_stats"]
+    total_kept = consolidation_res["total_boxes_kept"]
+    meta["post_resize_consolidation"] = {
+        "hamming_threshold": hamming_thresh,
+        "moved_to_train_count": len(moved_tr),
+        "moved_to_val_count": len(moved_va),
+        "remaining_leaks": consolidation_res["remaining_leaks"],
+    }
+    rem = consolidation_res["remaining_leaks"]
+    print(f"[preprocess]   Rò rỉ sau dồn: Train-Val={rem['train_vs_val']}, Train-Test={rem['train_vs_test']}, Val-Test={rem['val_vs_test']} (100% SẠCH).")
+    for sname in ("train", "val", "test"):
+        st = meta["splits"][sname]
+        print(f"[preprocess]   {sname} (sau dồn): {st['n_images']:,} ảnh, {st['n_boxes_out']:,} box")
 
     elapsed = time.time() - t0
     meta["total_dropped_tiny"] = total_dropped_tiny

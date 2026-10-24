@@ -20,12 +20,11 @@ def check_data_leakage(
     split_stems: dict[str, list[str]],
     stem_to_path: dict[str, Path],
     hash_size: int = 32,
-    hamming_thresh: int = 362,
+    hamming_thresh: int = 380,
 ) -> dict[str, Any]:
     """Khảo sát rò rỉ dữ liệu sử dụng dHash thuần túy giữa tất cả các cặp split (train, val, test).
 
-    Ngưỡng dHash mặc định 362 bit đã được chuẩn hóa theo tỷ lệ co rút khoảng cách sau Letterbox
-    Resize 640x640 (tương đương với ngưỡng 380 bit trên ảnh gốc RAW).
+    Ngưỡng dHash mặc định 380 bit để đánh giá rò rỉ dữ liệu giữa tất cả các cặp split.
     """
     splits = [s for s in ("train", "val", "test") if s in split_stems and split_stems[s]]
     n_splits = len(splits)
@@ -231,7 +230,7 @@ def plot_data_leakage(
     leak_matrix = np.array(leak_data.get("leak_matrix", np.zeros((n_splits, n_splits))))
     split_stems = leak_data.get("split_stems", {})
     min_dists = leak_data.get("min_dists")
-    hamming_thresh = leak_data.get("dhash_threshold", 362)
+    hamming_thresh = leak_data.get("dhash_threshold", 380)
     dhash_test_to_train = leak_data.get("dhash_test_to_train", {})
 
     fig, axes = plt.subplots(1, 2, figsize=(18, 7.5))
