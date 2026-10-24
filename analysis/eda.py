@@ -633,7 +633,8 @@ def main(argv=None) -> None:
     p.add_argument("--num-samples", type=int, default=9, help="Số ảnh mẫu vẽ demo nhãn (default: 9)")
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
     p.add_argument("--dhash-size", type=int, default=32, help="Kích thước cạnh dHash (default: 32 -> 1024 bits)")
-    p.add_argument("--dhash-hamming", type=int, default=370, help="Ngưỡng khoảng cách Hamming để gom cụm (default: 370)")
+    p.add_argument("--dhash-hamming", type=int, default=370, help="Ngưỡng khoảng cách Hamming dHash gom cụm (default: 370)")
+    p.add_argument("--phash-hamming", type=int, default=10, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (default: 10)")
     args = p.parse_args(argv)
 
     data_root_str = args.data_root or os.environ.get("DATA_ROOT") or ""
@@ -715,11 +716,19 @@ def main(argv=None) -> None:
         print("\n[EDA] 04 Box center heatmap...")
         plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
 
-        # ── 05. dHash Clusters (size=32, hamming<=370) ──
-        print(f"\n[EDA] 05 Gom cụm dHash 1024-bit (size={args.dhash_size}, Hamming ≤ {args.dhash_hamming})...")
-        cluster_res = cluster_images_dhash(img_paths, hash_size=args.dhash_size, hamming_thresh=args.dhash_hamming)
+        # ── 05. dHash + pHash Clusters ──
+        ph_str = f" + pHash 64-bit (Hamming ≤ {args.phash_hamming})" if args.phash_hamming else ""
+        print(f"\n[EDA] 05 Gom cụm dHash 1024-bit (size={args.dhash_size}, Hamming ≤ {args.dhash_hamming}){ph_str}...")
+        cluster_res = cluster_images_dhash(
+            img_paths,
+            hash_size=args.dhash_size,
+            hamming_thresh=args.dhash_hamming,
+            phash_thresh=args.phash_hamming,
+        )
         plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag=tag)
         summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}
+        with open(target_dir / "dhash_clusters.json", "w", encoding="utf-8") as f:
+            json.dump(cluster_res, f, ensure_ascii=False, indent=2)
 
         # ── 06. Tiny box candidates ──
         print("\n[EDA] 06 Tiny box candidates...")
