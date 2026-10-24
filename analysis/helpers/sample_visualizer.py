@@ -9,6 +9,12 @@ import matplotlib.patches as patches
 from PIL import Image
 
 
+DEFAULT_FIXED_SAMPLE_STEMS = [
+    "0157", "0491", "0627", "0664", "0850",
+    "1354", "1449", "1588", "3125",
+]
+
+
 def plot_sample_labeled_images(
     data_root: Path,
     boxes: list[dict[str, Any]],
@@ -18,8 +24,11 @@ def plot_sample_labeled_images(
     seed: int = 42,
     tag: str = "",
     fig_num: int = 9,
-) -> None:
-    """Figure 08 (RAW) hoặc 09 (PROCESSED): Vẽ lưới 3x3 ảnh demo kèm bounding box và tên lớp."""
+    sample_stems: list[str] | None = None,
+) -> list[str]:
+    """Figure 08 (RAW) hoặc 09 (PROCESSED): Vẽ lưới 3x3 ảnh demo kèm bounding box và tên lớp.
+    Đồng bộ hiển thị cùng 9 ảnh mẫu trên cả tập RAW và PROCESSED để tiện so sánh đối chiếu.
+    """
     img_dir = data_root / "images"
     search_dir = img_dir if img_dir.is_dir() else data_root
 
@@ -29,10 +38,17 @@ def plot_sample_labeled_images(
 
     valid_stems = [st for st, bxs in stem_to_boxes.items() if bxs]
     if not valid_stems:
-        return
+        return []
 
-    rng = random.Random(seed)
-    chosen_stems = rng.sample(valid_stems, min(num_samples, len(valid_stems)))
+    if sample_stems:
+        chosen_stems = [st for st in sample_stems if st in stem_to_boxes]
+    elif all(st in stem_to_boxes for st in DEFAULT_FIXED_SAMPLE_STEMS):
+        chosen_stems = DEFAULT_FIXED_SAMPLE_STEMS[:num_samples]
+    else:
+        real_stems = sorted([st for st in valid_stems if not ("_aug" in st)])
+        candidates = real_stems if len(real_stems) >= num_samples else valid_stems
+        rng = random.Random(seed)
+        chosen_stems = rng.sample(candidates, min(num_samples, len(candidates)))
 
     fig, axes = plt.subplots(3, 3, figsize=(16, 16))
     axes = axes.flatten()
@@ -82,3 +98,4 @@ def plot_sample_labeled_images(
     fig.savefig(fname, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {fname}")
+    return chosen_stems
