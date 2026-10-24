@@ -122,10 +122,21 @@ def split_by_dhash_clusters(
         image_size=image_size,
     )
 
-    # Đo kiểm quang học nhanh để cân bằng ảnh tối & mờ
-    print("[split] - Khảo sát độ sáng và độ mờ để cân bằng quang học...")
-
+def split_clusters_for_classes(
+    clusters: dict[str, list[str]],
+    stem_to_classes: dict[str, list[int]],
+    img_paths: list[Path],
+    ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
+    seed: int = 42,
+) -> dict[str, list[str]]:
+    """Phân bổ các cụm vào Train, Val, Test đảm bảo tập Train luôn có đủ 52/52 lớp
+    và 100% Cluster Isolation (không chia rẽ bất kỳ cụm nào).
+    """
+    total_images = len(img_paths)
+    all_stems = [p.stem for p in img_paths]
     stem_to_path = {p.stem: p for p in img_paths}
+
+    # Đo kiểm quang học nhanh để cân bằng ảnh tối & mờ
     stem_quality: dict[str, dict[str, bool]] = {}
     for s in all_stems:
         p = stem_to_path.get(s)
@@ -178,10 +189,9 @@ def split_by_dhash_clusters(
         if len(c_stems) >= 300:
             mandatory_train.add(cname)
 
-    print(f"[split]   Cụm bắt buộc vào Train (bảo toàn 52 lớp): {len(mandatory_train)} cụm ({sum(len(clusters[c]) for c in mandatory_train):,} ảnh).")
+    print(f"[split] Cụm bắt buộc vào Train (bảo toàn 52 lớp): {len(mandatory_train)} cụm ({sum(len(clusters[c]) for c in mandatory_train):,} ảnh).")
 
     # Thuật toán tìm kiếm nghiệm tối ưu cân bằng tỉ lệ, lớp và quang học
-    print("[split] Bước 3: Phân bổ các cụm vào Train, Val, Test theo tỉ lệ và cô lập 100% cụm...")
     best_score = float("inf")
     best_splits: dict[str, list[str]] | None = None
     best_info: Any = None
@@ -262,9 +272,52 @@ def split_by_dhash_clusters(
         raise RuntimeError("Không tìm thấy cấu hình split thỏa mãn điều kiện 52 lớp trong train.")
 
     sizes, classes, s_dark, s_blur = best_info
-    print(f"[split] Hoàn thành phân chia split theo cụm (Cô lập cụm 100%):")
+    print(f"[split] Hoàn thành phân bổ split theo cụm (Cô lập cụm 100%):")
     print(f"[split]   Train: {sizes['train']:,} ảnh ({sizes['train']/total_images*100:.1f}%) | {len(classes['train'])}/52 lớp | {s_dark['train']} ảnh tối | {s_blur['train']} ảnh mờ")
     print(f"[split]   Val  : {sizes['val']:,} ảnh ({sizes['val']/total_images*100:.1f}%) | {len(classes['val'])}/52 lớp | {s_dark['val']} ảnh tối | {s_blur['val']} ảnh mờ")
     print(f"[split]   Test : {sizes['test']:,} ảnh ({sizes['test']/total_images*100:.1f}%) | {len(classes['test'])}/52 lớp | {s_dark['test']} ảnh tối | {s_blur['test']} ảnh mờ")
 
     return best_splits
+
+
+def split_by_dhash_clusters(
+    img_paths: list[Path],
+    lbl_dir: Path,
+    ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
+    hash_size: int = 32,
+    hamming_thresh: int = 370,
+    phash_thresh: int | None = 10,
+    min_box_px: int = 8,
+    image_size: tuple[int, int] = (640, 640),
+    seed: int = 42,
+) -> dict[str, list[str]]:
+    """Phân chia split tự động dựa trên gom cụm dHash + pHash từ ảnh."""
+    if not img_paths:
+        return {"train": [], "val": [], "test": []}
+
+    cluster_res = cluster_images_dhash(
+        img_paths,
+        hash_size=hash_size,
+        hamming_thresh=hamming_thresh,
+        phash_thresh=phash_thresh,
+    )
+    clusters = cluster_res.get("clusters", {})
+    all_stems = [p.stem for p in img_paths]
+    stem_to_path = {p.stem: p for p in img_paths}
+
+    stem_to_classes = _read_labels_for_stems(
+        lbl_dir=lbl_dir,
+        stems=all_stems,
+        stem_to_path=stem_to_path,
+        min_box_px=min_box_px,
+        image_size=image_size,
+    )
+
+    return split_clusters_for_classes(
+        clusters=clusters,
+        stem_to_classes=stem_to_classes,
+        img_paths=img_paths,
+        ratio=ratio,
+        seed=seed,
+    )
+
