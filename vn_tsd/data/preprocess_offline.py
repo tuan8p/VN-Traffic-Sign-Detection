@@ -50,7 +50,7 @@ from collections import defaultdict, Counter
 
 from analysis.image_utils import calculate_dhash
 from analysis.clustering import cluster_images_dhash
-from analysis.split import split_clusters_for_classes, split_by_dhash_clusters
+from vn_tsd.data.split import split_clusters_for_classes, split_by_dhash_clusters
 from vn_tsd.data.augmentation import (
     augment_minority_classes,
     _read_raw_labels,
@@ -102,11 +102,9 @@ def _adjust_boxes(
     dy: float,
     target_w: int,
     target_h: int,
-    min_box_px: int = 8,
-) -> tuple[list[tuple[int, float, float, float, float]], int]:
-    """Chuyển đổi toạ độ YOLO box sang canvas mới và loại bỏ các box < min_box_px."""
+) -> list[tuple[int, float, float, float, float]]:
+    """Chuyển đổi toạ độ YOLO box sang canvas mới sau letterbox (không lọc tiny vì đã lọc sạch ở Bước 1)."""
     adjusted = []
-    dropped_tiny = 0
 
     for cid, cx, cy, bw, bh in boxes:
         abs_cx = cx * orig_w
@@ -118,12 +116,6 @@ def _adjust_boxes(
         new_cy = (abs_cy * scale + dy) / target_h
         new_bw = (abs_bw * scale) / target_w
         new_bh = (abs_bh * scale) / target_h
-
-        px_w = new_bw * target_w
-        px_h = new_bh * target_h
-        if px_w < min_box_px or px_h < min_box_px:
-            dropped_tiny += 1
-            continue
 
         x1 = max(0.0, new_cx - new_bw / 2)
         y1 = max(0.0, new_cy - new_bh / 2)
@@ -139,7 +131,7 @@ def _adjust_boxes(
 
         adjusted.append((cid, final_cx, final_cy, final_bw, final_bh))
 
-    return adjusted, dropped_tiny
+    return adjusted
 
 
 def _write_data_yaml(out_root: Path, classes: dict[int, str]) -> None:
@@ -452,15 +444,10 @@ def preprocess_dataset_offline(
         dst_img_dir = out_root / "images" / sname
         dst_lbl_dir = out_root / "labels" / sname
 
-        n_boxes_in = 0
         n_boxes_out = 0
-        n_tiny_dropped = 0
 
         for stem in stems:
             src_img_p = stem_to_imgpath[stem]
-            raw_boxes = _read_raw_labels(lbl_dir / f"{stem}.txt")
-            n_boxes_in += len(raw_boxes)
-
             img = cv2.imread(str(src_img_p))
             if img is None:
                 continue
@@ -468,10 +455,9 @@ def preprocess_dataset_offline(
             orig_h, orig_w = img.shape[:2]
             canvas, scale, dx, dy = _letterbox_image(img, image_size, pad_value)
 
-            adj_boxes, tiny_cnt = _adjust_boxes(
-                clean_boxes[stem], orig_w, orig_h, scale, dx, dy, image_size[0], image_size[1], min_box_px
+            adj_boxes = _adjust_boxes(
+                clean_boxes[stem], orig_w, orig_h, scale, dx, dy, image_size[0], image_size[1]
             )
-            n_tiny_dropped += (len(raw_boxes) - len(adj_boxes))
             n_boxes_out += len(adj_boxes)
 
             cv2.imwrite(str(dst_img_dir / f"{stem}.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -479,12 +465,10 @@ def preprocess_dataset_offline(
 
         meta["splits"][sname] = {
             "n_images": len(stems),
-            "n_boxes_in": n_boxes_in,
             "n_boxes_out": n_boxes_out,
-            "n_tiny_dropped": n_tiny_dropped,
         }
         total_kept += n_boxes_out
-        print(f"[preprocess]   {sname}: {len(stems)} ảnh, {n_boxes_out}/{n_boxes_in} box giữ lại ({n_tiny_dropped} tiny bỏ)")
+        print(f"[preprocess]   {sname}: {len(stems)} ảnh, {n_boxes_out} box")
 
     # Ghi toàn bộ ảnh và nhãn augmented vào tập Train
     if aug_items:
