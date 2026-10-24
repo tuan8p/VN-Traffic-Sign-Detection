@@ -2,7 +2,7 @@
 
 Sử dụng:
   - dHash 1024-bit (size=32)
-  - Ngưỡng Hamming distance <= 370
+  - Ngưỡng Hamming distance <= 380
   - Tự động loại bỏ viền padding xám 114 khi tính hash
 """
 from __future__ import annotations
@@ -10,11 +10,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from collections import Counter
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis.helpers.image_utils import calculate_dhash, calculate_dhash_and_phash
+from analysis.helpers.image_utils import calculate_dhash
 
 
 class _DisjointSet:
@@ -45,37 +44,22 @@ def cluster_images_dhash(
     img_paths: list[Path],
     hash_size: int = 32,
     hamming_thresh: int = 380,
-    phash_size: int = 8,
-    phash_thresh: int | None = None,
-    max_merge_cluster_size: int = 1800,
 ) -> dict[str, Any]:
-    """Gom cụm ảnh 2 giai đoạn: dHash (gradient) kết hợp pHash (tần số DCT).
+    """Gom cụm ảnh bằng mã băm dHash thuần túy (1024-bit).
 
-    1. Bước 1 (dHash 1024-bit): Gom cụm cục bộ các ảnh cùng chuỗi dashcam (Hamming <= hamming_thresh).
-    2. Bước 2 (pHash DCT 64-bit): Nếu phash_thresh != None, tính representative pHash
-       cho từng cụm và tiếp tục gộp các cụm có bối cảnh toàn cục tương đồng (Hamming <= phash_thresh).
+    Gom cụm các ảnh cùng chuỗi dashcam/cùng địa điểm nếu khoảng cách Hamming dHash <= hamming_thresh.
     """
     if not img_paths:
         return {}
 
     d_hashes = []
-    p_hashes = []
     valid_stems = []
 
-    use_phash = (phash_thresh is not None and phash_thresh > 0)
-
     for p in img_paths:
-        if use_phash:
-            hd, hp = calculate_dhash_and_phash(p, dhash_size=hash_size, phash_size=phash_size, strip_padding=True)
-            if hd is not None and hp is not None:
-                d_hashes.append(hd)
-                p_hashes.append(hp)
-                valid_stems.append(p.stem)
-        else:
-            hd = calculate_dhash(p, hash_size=hash_size, strip_padding=True)
-            if hd is not None:
-                d_hashes.append(hd)
-                valid_stems.append(p.stem)
+        hd = calculate_dhash(p, hash_size=hash_size, strip_padding=True)
+        if hd is not None:
+            d_hashes.append(hd)
+            valid_stems.append(p.stem)
 
     if not d_hashes:
         return {}
@@ -85,7 +69,7 @@ def cluster_images_dhash(
     N = len(packed_d)
     popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
 
-    # ── Giai đoạn 1: Gom cụm bằng dHash ──
+    # Gom cụm bằng dHash
     dsu_d = _DisjointSet(N)
     chunk_size = 500
     for start in range(0, N, chunk_size):
@@ -103,60 +87,7 @@ def cluster_images_dhash(
         root = dsu_d.find(idx)
         raw_clusters.setdefault(root, []).append(idx)
 
-    initial_cluster_count = len(raw_clusters)
-
-    # ── Giai đoạn 2: Tiếp tục gộp các cụm giống nhau bằng pHash ──
-    clusters_merged_by_phash = 0
-    if use_phash and p_hashes:
-        mat_p = np.array(p_hashes, dtype=np.uint8)
-        cluster_roots = list(raw_clusters.keys())
-        K = len(cluster_roots)
-
-        # Tính representative pHash cho từng cụm dHash (bitwise majority vote)
-        cluster_rep_p = []
-        cluster_sizes_current = []
-        for root in cluster_roots:
-            indices = raw_clusters[root]
-            cluster_sizes_current.append(len(indices))
-            member_p = mat_p[indices]
-            rep = (member_p.mean(axis=0) >= 0.5).astype(np.uint8)
-            cluster_rep_p.append(rep)
-
-        rep_packed = np.packbits(np.array(cluster_rep_p, dtype=np.uint8), axis=1)
-
-        dsu_p = _DisjointSet(K)
-        xor_p = np.bitwise_xor(rep_packed[:, None, :], rep_packed[None, :, :])
-        dist_p = popcount[xor_p].sum(axis=2)
-
-        # Gộp cụm nếu representative pHash gần nhau và kích thước sau gộp không vượt trần
-        merged_sizes = list(cluster_sizes_current)
-        for i in range(K):
-            for j in range(i + 1, K):
-                if dist_p[i, j] <= phash_thresh:
-                    root_i = dsu_p.find(i)
-                    root_j = dsu_p.find(j)
-                    if root_i != root_j:
-                        combined_sz = merged_sizes[root_i] + merged_sizes[root_j]
-                        if combined_sz <= max_merge_cluster_size:
-                            dsu_p.union(root_i, root_j)
-                            new_root = dsu_p.find(root_i)
-                            merged_sizes[new_root] = combined_sz
-                            clusters_merged_by_phash += 1
-
-        merged_clusters: dict[int, list[int]] = {}
-        for i, root in enumerate(cluster_roots):
-            p_root = dsu_p.find(i)
-            merged_clusters.setdefault(p_root, []).extend(raw_clusters[root])
-
-        final_raw_groups = [[valid_stems[idx] for idx in group] for group in merged_clusters.values()]
-        print(
-            f"[cluster] dHash (Hamming <= {hamming_thresh}): {initial_cluster_count} cum -> "
-            f"pHash gop (Hamming <= {phash_thresh}): giam {clusters_merged_by_phash} cum -> "
-            f"Con lai {len(final_raw_groups)} cum."
-        )
-    else:
-        final_raw_groups = [[valid_stems[idx] for idx in group] for group in raw_clusters.values()]
-
+    final_raw_groups = [[valid_stems[idx] for idx in group] for group in raw_clusters.values()]
     sorted_groups = sorted(final_raw_groups, key=len, reverse=True)
     clusters: dict[str, list[str]] = {}
     stem_to_cluster: dict[str, int] = {}
@@ -172,13 +103,15 @@ def cluster_images_dhash(
     n_singletons = sum(1 for sz in cluster_sizes if sz == 1)
     n_multi = len(cluster_sizes) - n_singletons
 
+    print(
+        f"[cluster] dHash 1024-bit (Hamming <= {hamming_thresh}): "
+        f"Gom {N:,} ảnh thành {len(clusters):,} cụm "
+        f"({n_multi:,} cụm đa ảnh, {n_singletons:,} ảnh đơn lẻ)."
+    )
+
     return {
         "hash_size": hash_size,
         "hamming_threshold": hamming_thresh,
-        "phash_size": phash_size,
-        "phash_threshold": phash_thresh,
-        "initial_dhash_clusters": initial_cluster_count,
-        "clusters_merged_by_phash": clusters_merged_by_phash,
         "total_images": N,
         "total_clusters": len(clusters),
         "singletons": n_singletons,
@@ -201,13 +134,10 @@ def plot_dhash_clusters(
         return
 
     hash_size = cluster_res.get("hash_size", 32)
-    hamming_thresh = cluster_res.get("hamming_threshold", 370)
+    hamming_thresh = cluster_res.get("hamming_threshold", 380)
     N = cluster_res.get("total_images", 0)
-    n_singletons = cluster_res.get("singletons", 0)
-    n_multi = cluster_res.get("multi_image_clusters", 0)
 
-    phash_t = cluster_res.get("phash_threshold")
-    sub_h = f"dHash {hash_size*hash_size}b (≤{hamming_thresh}) + pHash 64b (≤{phash_t})" if phash_t else f"dHash {hash_size*hash_size}b (≤{hamming_thresh})"
+    sub_h = f"dHash {hash_size*hash_size}b (≤{hamming_thresh})"
     fig, axes = plt.subplots(1, 2, figsize=(16, 6.5))
     title_suffix = f" – {tag.upper()}" if tag else ""
     fig.suptitle(

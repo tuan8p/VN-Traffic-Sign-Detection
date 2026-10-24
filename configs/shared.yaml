@@ -43,7 +43,6 @@ split:
   ratios: { train: 0.7, val: 0.15, test: 0.15 }
   hash_size: 32
   hamming_threshold: 380
-  phash_threshold: null # Đã bỏ so sánh pHash theo yêu cầu, chỉ dùng dHash thuần túy
 
 # One total for both pipelines. Size it to fill the 2 Kaggle T4s.
 # Do not give each pipeline its own train or eval batch.
