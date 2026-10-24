@@ -165,9 +165,9 @@ def transform_and_letterbox_crop(
     cbx2 = bx2 - crop_x1
     cby2 = by2 - crop_y1
 
-    # ── Biến đổi hình học: Xoay nhiều góc & Zoom in / Zoom out ──
-    # Xoay nhiều góc: góc ngẫu nhiên từ -25 độ đến +25 độ
-    angle = rng.uniform(-25.0, 25.0)
+    # ── Biến đổi hình học: Zoom in / Zoom out (bỏ xoay ảnh) ──
+    # Bỏ xoay ảnh: giữ nguyên góc đứng của biển báo (angle = 0.0)
+    angle = 0.0
     # Zoom in / Zoom out: tỉ lệ co dãn 0.75 - 1.35
     zoom = rng.uniform(0.75, 1.35)
 
@@ -202,11 +202,11 @@ def transform_and_letterbox_crop(
     if (nbx2 - nbx1) < min_box_px or (nby2 - nby1) < min_box_px:
         return None, None
 
-    # ── Biến đổi quang học: Làm mờ (Blur) & Ánh sáng nhẹ ──
-    # Xác suất 40% làm mờ (Gaussian hoặc Motion blur)
-    if rng.random() < 0.40:
-        ksize = rng.choice([3, 5, 7])
-        transformed_crop = cv2.GaussianBlur(transformed_crop, (ksize, ksize), 0)
+    # ── Biến đổi quang học: Làm mờ nhẹ (mờ nhưng vẫn nhìn thấy rõ) & Ánh sáng nhẹ ──
+    # Xác suất 35% làm mờ nhẹ (kernel 3x3, sigma 0.6 - 1.0 giữ chi tiết biển báo rõ ràng)
+    if rng.random() < 0.35:
+        sigma = rng.uniform(0.6, 1.0)
+        transformed_crop = cv2.GaussianBlur(transformed_crop, (3, 3), sigmaX=sigma, sigmaY=sigma)
 
     # Đổi sáng / tương phản nhẹ nhàng
     alpha = rng.uniform(0.88, 1.15)
@@ -253,6 +253,7 @@ def augment_minority_classes(
     image_size: tuple[int, int] = (640, 640),
     min_box_px: int = 8,
     pad_value: int = 114,
+    max_augmented_per_class: int = 7,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Cân bằng dữ liệu cho các lớp trong tập Train bằng cô lập biển báo và biến đổi ảnh.
@@ -261,6 +262,7 @@ def augment_minority_classes(
       - Class ít mẫu (< 30 box): Tăng khoảng 2-3 lần (mặc định 2.5x).
       - Class có số mẫu trung bình (30 - 150 box): Tăng khoảng 1.5-2 lần (mặc định 1.75x).
       - Class nhiều mẫu (> 150 box): Giữ nguyên (1.0x).
+      - Giới hạn tối đa: không quá 7 ảnh cộng thêm cho bất kỳ class nào (max_augmented_per_class = 7).
       - Chọn ngẫu nhiên ảnh trong tập ứng viên của class để áp dụng biến đổi,
         phân bổ đều qua các ảnh khác nhau trong class trước khi lặp lại.
     """
@@ -316,19 +318,24 @@ def augment_minority_classes(
         for cid, cnt in class_counts.items():
             class_targets[cid] = max(cnt, fixed_target)
 
-    class_needed = {c: class_targets[c] - class_counts[c] for c in class_counts if class_targets[c] > class_counts[c]}
+    # Giới hạn tối đa không quá max_augmented_per_class (mặc định 7) ảnh cộng thêm mỗi class
+    class_needed = {
+        c: min(class_targets[c] - class_counts[c], max_augmented_per_class)
+        for c in class_counts
+        if class_targets[c] > class_counts[c]
+    }
     if not class_needed:
         print("[augment] Tất cả các lớp trong train đã đạt mục tiêu, không cần augment.")
         return {"n_augmented_images": 0, "n_augmented_boxes": 0}
 
     total_needed = sum(class_needed.values())
     print(
-        f"[augment] Bắt đầu tăng cường cho {len(class_needed)} lớp trong Train (chính sách: {policy_str}). "
+        f"[augment] Bắt đầu tăng cường cho {len(class_needed)} lớp trong Train (chính sách: {policy_str}, trần tối đa: {max_augmented_per_class} ảnh/lớp). "
         f"Cần sinh thêm ~{total_needed:,} box..."
     )
     print(
         "[augment]   Cơ chế: Chọn ảnh ngẫu nhiên từ tập ứng viên đa dạng -> Cắt biển báo + bối cảnh an toàn "
-        "-> Xoay nhiều góc, Zoom in/out, Làm mờ -> Đưa về canvas 640x640."
+        "-> Zoom in/out, Làm mờ nhẹ -> Đưa về canvas 640x640."
     )
 
     popcount = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)

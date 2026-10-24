@@ -17,23 +17,52 @@ from typing import Any
 from collections import defaultdict, Counter
 import numpy as np
 
+from PIL import Image
+
 from analysis.image_utils import calculate_brightness_sharpness
 from analysis.clustering import cluster_images_dhash
 
 
-def _read_labels_for_stems(lbl_dir: Path, stems: list[str]) -> dict[str, list[int]]:
-    """Đọc danh sách class_id cho từng file nhãn."""
+def _read_labels_for_stems(
+    lbl_dir: Path,
+    stems: list[str],
+    stem_to_path: dict[str, Path] | None = None,
+    min_box_px: int = 8,
+    image_size: tuple[int, int] = (640, 640),
+) -> dict[str, list[int]]:
+    """Đọc danh sách class_id cho từng file nhãn sau khi đã loại bỏ triệt để các box tiny (< min_box_px)."""
     stem_to_classes: dict[str, list[int]] = defaultdict(list)
+    tw, th = image_size
+
     for s in stems:
         p = lbl_dir / f"{s}.txt"
         if not p.exists():
             continue
+
+        orig_w, orig_h = 960, 540
+        if stem_to_path and s in stem_to_path:
+            img_p = stem_to_path[s]
+            if img_p.exists():
+                try:
+                    with Image.open(img_p) as im:
+                        orig_w, orig_h = im.size
+                except Exception:
+                    pass
+
+        scale = min(tw / orig_w, th / orig_h)
+
         try:
             with open(p, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split()
-                    if parts:
-                        stem_to_classes[s].append(int(parts[0]))
+                    if len(parts) >= 5:
+                        cid = int(parts[0])
+                        bw, bh = float(parts[3]), float(parts[4])
+                        px_w = bw * orig_w * scale
+                        px_h = bh * orig_h * scale
+                        # Loại bỏ tiny box trước khi gom cụm & phân bổ lớp
+                        if px_w >= min_box_px and px_h >= min_box_px:
+                            stem_to_classes[s].append(cid)
         except Exception:
             continue
     return stem_to_classes
@@ -46,14 +75,18 @@ def split_by_dhash_clusters(
     hash_size: int = 32,
     hamming_thresh: int = 370,
     phash_thresh: int | None = 10,
+    min_box_px: int = 8,
+    image_size: tuple[int, int] = (640, 640),
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Phân chia split hoàn toàn tự động dựa trên kết quả gom cụm dHash + pHash từ ảnh."""
+    """Phân chia split tự động dựa trên kết quả gom cụm dHash + pHash từ ảnh,
+    đã loại bỏ box tiny (< min_box_px) ngay từ trước khi gom cụm/phân chia lớp.
+    """
     if not img_paths:
         return {"train": [], "val": [], "test": []}
 
-    phash_str = f" + pHash 64-bit (Hamming ≤ {phash_thresh})" if phash_thresh else ""
-    print(f"[split] Bước 1: Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming ≤ {hamming_thresh}){phash_str}...")
+    phash_str = f" + pHash 64-bit (Hamming <= {phash_thresh})" if phash_thresh else ""
+    print(f"[split] Bước 1: Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){phash_str}...")
     cluster_res = cluster_images_dhash(
         img_paths,
         hash_size=hash_size,
@@ -77,10 +110,21 @@ def split_by_dhash_clusters(
     print(f"[split]   Tìm thấy {len(clusters):,} cụm từ {total_images:,} ảnh.")
 
     all_stems = [p.stem for p in img_paths]
-    stem_to_classes = _read_labels_for_stems(lbl_dir, all_stems)
+    stem_to_path = {p.stem: p for p in img_paths}
+
+    # Đọc nhãn sau khi loại bỏ tiny box (< min_box_px) TRƯỚC khi gom cụm / tính phân bố lớp
+    print(f"[split] Lọc bỏ box tiny (< {min_box_px}px) trước khi xác định phân bố lớp của các cụm...")
+    stem_to_classes = _read_labels_for_stems(
+        lbl_dir=lbl_dir,
+        stems=all_stems,
+        stem_to_path=stem_to_path,
+        min_box_px=min_box_px,
+        image_size=image_size,
+    )
 
     # Đo kiểm quang học nhanh để cân bằng ảnh tối & mờ
     print("[split] Bước 2: Khảo sát độ sáng và độ mờ để cân bằng quang học...")
+
     stem_to_path = {p.stem: p for p in img_paths}
     stem_quality: dict[str, dict[str, bool]] = {}
     for s in all_stems:
@@ -142,32 +186,44 @@ def split_by_dhash_clusters(
     best_splits: dict[str, list[str]] | None = None
     best_info: Any = None
 
+    # Tiền tính toán trước để tối ưu tốc độ x100 lần
+    mandatory_stems: list[str] = []
+    mandatory_sz = 0
+    mandatory_classes: set[int] = set()
+    mandatory_dark = 0
+    mandatory_blur = 0
+    for cname in mandatory_train:
+        c_stems = clusters[cname]
+        mandatory_stems.extend(c_stems)
+        mandatory_sz += len(c_stems)
+        mandatory_classes.update(cluster_to_classes[cname])
+        mandatory_dark += cluster_quality[cname]["dark"]
+        mandatory_blur += cluster_quality[cname]["blur"]
+
+    remaining_clusters = [c for c in clusters if c not in mandatory_train]
+    cluster_cls_set = {c: set(cluster_to_classes[c]) for c in remaining_clusters}
+    cluster_sz = {c: len(clusters[c]) for c in remaining_clusters}
+    cluster_dk = {c: cluster_quality[c]["dark"] for c in remaining_clusters}
+    cluster_bl = {c: cluster_quality[c]["blur"] for c in remaining_clusters}
+
     rng_seed = seed
-    for trial in range(3000):
+    for trial in range(300):
         rng = random.Random(rng_seed + trial)
-        splits: dict[str, list[str]] = {"train": [], "val": [], "test": []}
-        split_sizes = {"train": 0, "val": 0, "test": 0}
-        split_classes: dict[str, set[int]] = {"train": set(), "val": set(), "test": set()}
-        split_dark = {"train": 0, "val": 0, "test": 0}
-        split_blur = {"train": 0, "val": 0, "test": 0}
+        splits: dict[str, list[str]] = {"train": list(mandatory_stems), "val": [], "test": []}
+        split_sizes = {"train": mandatory_sz, "val": 0, "test": 0}
+        split_classes: dict[str, set[int]] = {"train": set(mandatory_classes), "val": set(), "test": set()}
+        split_dark = {"train": mandatory_dark, "val": 0, "test": 0}
+        split_blur = {"train": mandatory_blur, "val": 0, "test": 0}
 
-        for cname in mandatory_train:
-            c_stems = clusters[cname]
-            splits["train"].extend(c_stems)
-            split_sizes["train"] += len(c_stems)
-            split_classes["train"].update(cluster_to_classes[cname])
-            split_dark["train"] += cluster_quality[cname]["dark"]
-            split_blur["train"] += cluster_quality[cname]["blur"]
-
-        remaining = [c for c in clusters if c not in mandatory_train]
+        remaining = list(remaining_clusters)
         rng.shuffle(remaining)
 
         for cname in remaining:
             c_stems = clusters[cname]
-            c_sz = len(c_stems)
-            c_cls = set(cluster_to_classes[cname])
-            c_dk = cluster_quality[cname]["dark"]
-            c_bl = cluster_quality[cname]["blur"]
+            c_s = cluster_sz[cname]
+            c_cls = cluster_cls_set[cname]
+            c_d = cluster_dk[cname]
+            c_b = cluster_bl[cname]
 
             missing_train = c_cls - split_classes["train"]
             if missing_train and split_sizes["train"] < target_counts["train"] + 30:
@@ -175,18 +231,18 @@ def split_by_dhash_clusters(
             else:
                 scores = {}
                 for s in ("val", "test", "train"):
-                    fill = (split_sizes[s] + c_sz) / target_counts[s]
+                    fill = (split_sizes[s] + c_s) / target_counts[s]
                     new_c = len(c_cls - split_classes[s])
-                    dark_fill = (split_dark[s] + c_dk) / max(1, tot_dark * (ratio[0] if s == "train" else ratio[1]))
-                    blur_fill = (split_blur[s] + c_bl) / max(1, tot_blur * (ratio[0] if s == "train" else ratio[1]))
+                    dark_fill = (split_dark[s] + c_d) / max(1, tot_dark * (ratio[0] if s == "train" else ratio[1]))
+                    blur_fill = (split_blur[s] + c_b) / max(1, tot_blur * (ratio[0] if s == "train" else ratio[1]))
                     scores[s] = fill + 0.35 * dark_fill + 0.35 * blur_fill - 0.2 * new_c + rng.uniform(-0.02, 0.02)
                 chosen = min(scores.keys(), key=lambda s: scores[s])
 
             splits[chosen].extend(c_stems)
-            split_sizes[chosen] += c_sz
+            split_sizes[chosen] += c_s
             split_classes[chosen].update(c_cls)
-            split_dark[chosen] += c_dk
-            split_blur[chosen] += c_bl
+            split_dark[chosen] += c_d
+            split_blur[chosen] += c_b
 
         if len(split_classes["train"]) < 52:
             continue

@@ -62,6 +62,12 @@ from analysis.leakage import check_data_leakage, plot_data_leakage
 plt.rcParams["font.sans-serif"] = ["Segoe UI", "Arial", "Tahoma", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
+__all__ = [
+    "analyze_processed_dataset",
+    "analyze_raw_dataset",
+    "main",
+]
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -618,8 +624,214 @@ def plot_sample_labeled_images(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Main Orchestrator
+# Main Phân tích Độc lập cho Raw và Processed
 # ──────────────────────────────────────────────────────────────────────────────
+
+def analyze_processed_dataset(
+    data_root: str | Path = "data/processed",
+    figures_dir: str | Path | None = None,
+    class_table: str | Path | None = None,
+    image_size: int = 640,
+    min_box_px: int = 8,
+    num_samples: int = 9,
+    quality_samples: int = 1000,
+    dhash_size: int = 32,
+    dhash_hamming: int = 370,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Hàm phân tích chuyên sâu độc lập cho bộ dữ liệu sau tiền xử lý (data/processed).
+
+    Sinh đủ 9 biểu đồ chuẩn lưu tại analysis/figures/processed/:
+      01_class_distribution: Phân bố 52 lớp trên 3 subplot (Train Real vs Aug, Val, Test)
+      02_boxes_per_image: Phân bố box/ảnh sau letterbox
+      03_box_dimensions: Kích thước box trên canvas 640x640
+      04_box_center_heatmap: Mật độ vị trí tâm box trên canvas 640x640
+      05_images_per_split: Số lượng ảnh và box theo từng split
+      06_tiny_box_candidates: Xác nhận 0% box nhỏ < min_box_px
+      07_data_leakage: Ma trận trùng lặp dHash & khoảng cách Hamming (bỏ viền xám 114)
+      08_brightness_sharpness: Đo kiểm độ sáng và độ nét sau tiền xử lý
+      09_sample_labels: Demo 9 ảnh mẫu sau tiền xử lý kèm bounding box
+    Lưu tóm tắt kết quả: analysis/figures/processed/eda_summary.json
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    data_root = Path(data_root).resolve()
+    target_dir = Path(figures_dir).resolve() if figures_dir else repo_root / "analysis" / "figures" / "processed"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    c_table = Path(class_table).resolve() if class_table else repo_root / "configs" / "classes.csv"
+    classes = _load_classes(c_table)
+
+    print(f"[EDA Processed] ========================================================")
+    print(f"[EDA Processed] Phân tích dataset sau tiền xử lý tại: {data_root}")
+    print(f"[EDA Processed] Thư mục xuất biểu đồ: {target_dir}")
+    print(f"[EDA Processed] ========================================================")
+
+    img_paths = _get_image_paths(data_root)
+    stem_to_path = {p.stem: p for p in img_paths}
+
+    split_names = ["train", "val", "test"]
+    split_stems: dict[str, list[str]] = {}
+    split_stats: dict[str, tuple[int, int]] = {}
+    all_boxes: list[dict[str, Any]] = []
+
+    for sname in split_names:
+        s_lbl_dir = data_root / "labels" / sname
+        s_img_dir = data_root / "images" / sname
+        s_imgs = list(s_img_dir.glob("*.jpg")) if s_img_dir.is_dir() else []
+        sboxes = _read_yolo_labels(s_lbl_dir, image_size_px=image_size)
+        for b in sboxes:
+            b["split"] = sname
+            b["is_augmented"] = ("_aug" in b.get("stem", ""))
+        all_boxes.extend(sboxes)
+        stems = [p.stem for p in s_imgs] if s_imgs else list({b["stem"] for b in sboxes})
+        split_stems[sname] = sorted(stems)
+        split_stats[sname] = (len(stems), len(sboxes))
+
+    summary_meta: dict[str, Any] = {
+        "tag": "processed",
+        "data_root": str(data_root),
+        "n_images": len(img_paths),
+        "n_boxes": len(all_boxes),
+        "splits": split_stats,
+    }
+
+    # 01. Class distribution (3 subplot)
+    print("\n[EDA Processed] 01 Class distribution (3 subplot: Train Real vs Aug, Val, Test)...")
+    summary_meta["classes"] = plot_class_distribution(all_boxes, classes, target_dir / "01_class_distribution.png", tag="processed")
+
+    # 02. Boxes per Image
+    print("\n[EDA Processed] 02 Boxes per label / image distribution...")
+    plot_boxes_per_image(data_root, all_boxes, target_dir, tag="processed")
+
+    # 03. Box dimensions
+    print("\n[EDA Processed] 03 Box dimensions...")
+    plot_box_dimensions(all_boxes, target_dir, image_size=image_size, tag="processed")
+
+    # 04. Box center heatmap
+    print("\n[EDA Processed] 04 Box center heatmap...")
+    plot_box_center_heatmap(all_boxes, target_dir, tag="processed")
+
+    # 05. Images per split
+    print("\n[EDA Processed] 05 Images per split...")
+    plot_images_per_split(split_stats, target_dir, tag="processed")
+
+    # 06. Tiny box candidates
+    print("\n[EDA Processed] 06 Tiny box candidates...")
+    plot_tiny_box_candidates(all_boxes, target_dir, min_box_px=min_box_px, image_size=image_size, tag="processed")
+
+    # 07. Data leakage check (loại bỏ padding xám 114)
+    print(f"\n[EDA Processed] 07 Data leakage check (dHash size={dhash_size}, Hamming <= {dhash_hamming}, bỏ viền xám)...")
+    leak_data = check_data_leakage(split_stems, stem_to_path, hash_size=dhash_size, hamming_thresh=dhash_hamming)
+    plot_data_leakage(leak_data, target_dir / "07_data_leakage.png", tag="processed")
+    summary_meta["leakage"] = {k: v for k, v in leak_data.items() if k not in ("min_dists",)}
+
+    # 08. Brightness & Sharpness
+    print(f"\n[EDA Processed] 08 Brightness & Sharpness (mẫu {min(quality_samples, len(img_paths))} ảnh)...")
+    summary_meta["quality"] = analyze_and_plot_brightness_sharpness(img_paths, target_dir, max_samples=quality_samples, tag="processed", fig_num=8)
+
+    # 09. Demo n ảnh mẫu
+    print(f"\n[EDA Processed] 09 Demo {num_samples} ảnh mẫu kèm label...")
+    plot_sample_labeled_images(data_root, all_boxes, classes, target_dir, num_samples=num_samples, seed=seed, tag="processed", fig_num=9)
+
+    summary_path = target_dir / "eda_summary.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary_meta, f, indent=2, ensure_ascii=False)
+    print(f"\n[EDA Processed] Đã lưu tóm tắt thống kê: {summary_path}")
+    print(f"[EDA Processed] Hoàn thành phân tích! Toàn bộ 9 biểu đồ đã ghi tại: {target_dir}")
+
+    return summary_meta
+
+
+def analyze_raw_dataset(
+    data_root: str | Path = "data/raw",
+    figures_dir: str | Path | None = None,
+    class_table: str | Path | None = None,
+    image_size: int = 640,
+    min_box_px: int = 8,
+    num_samples: int = 9,
+    quality_samples: int = 1000,
+    dhash_size: int = 32,
+    dhash_hamming: int = 370,
+    phash_hamming: int = 10,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Phân tích dữ liệu thô ban đầu (data/raw) với chuẩn 8 biểu đồ."""
+    repo_root = Path(__file__).resolve().parents[1]
+    data_root = Path(data_root).resolve()
+    target_dir = Path(figures_dir).resolve() if figures_dir else repo_root / "analysis" / "figures" / "raw"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    c_table = Path(class_table).resolve() if class_table else repo_root / "configs" / "classes.csv"
+    classes = _load_classes(c_table)
+
+    print(f"[EDA Raw] ========================================================")
+    print(f"[EDA Raw] Phân tích dataset thô tại: {data_root}")
+    print(f"[EDA Raw] Thư mục xuất biểu đồ: {target_dir}")
+    print(f"[EDA Raw] ========================================================")
+
+    img_paths = _get_image_paths(data_root)
+    flat_lbl_dir = data_root / "labels" if (data_root / "labels").is_dir() else data_root
+    all_boxes = _read_yolo_labels(flat_lbl_dir, image_size_px=image_size)
+    stems_all = sorted(list({b["stem"] for b in all_boxes}))
+
+    summary_meta: dict[str, Any] = {
+        "tag": "raw",
+        "data_root": str(data_root),
+        "n_images": len(img_paths),
+        "n_boxes": len(all_boxes),
+        "splits": {"all": (len(img_paths) if img_paths else len(stems_all), len(all_boxes))},
+    }
+
+    # 01. Class distribution
+    print("\n[EDA Raw] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
+    summary_meta["classes"] = plot_class_distribution(all_boxes, classes, target_dir / "01_class_distribution.png", tag="raw")
+
+    # 02. Boxes per Image
+    print("\n[EDA Raw] 02 Boxes per label / image distribution...")
+    plot_boxes_per_image(data_root, all_boxes, target_dir, tag="raw")
+
+    # 03. Box dimensions
+    print("\n[EDA Raw] 03 Box dimensions...")
+    plot_box_dimensions(all_boxes, target_dir, image_size=image_size, tag="raw")
+
+    # 04. Box center heatmap
+    print("\n[EDA Raw] 04 Box center heatmap...")
+    plot_box_center_heatmap(all_boxes, target_dir, tag="raw")
+
+    # 05. dHash + pHash Clusters
+    ph_str = f" + pHash 64-bit (Hamming <= {phash_hamming})" if phash_hamming else ""
+    print(f"\n[EDA Raw] 05 Gom cụm dHash 1024-bit (size={dhash_size}, Hamming <= {dhash_hamming}){ph_str}...")
+    cluster_res = cluster_images_dhash(
+        img_paths,
+        hash_size=dhash_size,
+        hamming_thresh=dhash_hamming,
+        phash_thresh=phash_hamming,
+    )
+    plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag="raw")
+    summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}
+    with open(target_dir / "dhash_clusters.json", "w", encoding="utf-8") as f:
+        json.dump(cluster_res, f, ensure_ascii=False, indent=2)
+
+    # 06. Tiny box candidates
+    print("\n[EDA Raw] 06 Tiny box candidates...")
+    plot_tiny_box_candidates(all_boxes, target_dir, min_box_px=min_box_px, image_size=image_size, tag="raw")
+
+    # 07. Brightness & Sharpness
+    print(f"\n[EDA Raw] 07 Brightness & Sharpness (mẫu {min(quality_samples, len(img_paths))} ảnh)...")
+    summary_meta["quality"] = analyze_and_plot_brightness_sharpness(img_paths, target_dir, max_samples=quality_samples, tag="raw", fig_num=7)
+
+    # 08. Demo n ảnh mẫu
+    print(f"\n[EDA Raw] 08 Demo {num_samples} ảnh mẫu kèm label...")
+    plot_sample_labeled_images(data_root, all_boxes, classes, target_dir, num_samples=num_samples, seed=seed, tag="raw", fig_num=8)
+
+    summary_path = target_dir / "eda_summary.json"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(summary_meta, f, indent=2, ensure_ascii=False)
+    print(f"\n[EDA Raw] Đã lưu tóm tắt thống kê: {summary_path}")
+    print(f"[EDA Raw] Hoàn thành phân tích! Toàn bộ 8 biểu đồ đã ghi tại: {target_dir}")
+
+    return summary_meta
+
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(
@@ -646,150 +858,33 @@ def main(argv=None) -> None:
         print(f"[EDA] Không tìm thấy thư mục: {data_root}")
         sys.exit(1)
 
-    repo_root = Path(__file__).resolve().parents[1]
-    figures_dir = Path(args.figures_dir) if args.figures_dir else repo_root / "analysis" / "figures"
-    class_table = Path(args.class_table) if args.class_table else repo_root / "configs" / "classes.csv"
-    classes = _load_classes(class_table)
-    print(f"[EDA] Đọc {len(classes)} lớp từ {class_table}")
-    print(f"[EDA] Đọc dữ liệu từ: {data_root}")
-
-    # Thu thập ảnh và nhãn
-    img_paths = _get_image_paths(data_root)
-    stem_to_path = {p.stem: p for p in img_paths}
-
-    split_names = ["train", "val", "test"]
-    split_stems: dict[str, list[str]] = {}
-    split_stats: dict[str, tuple[int, int]] = {}
-    all_boxes: list[dict[str, Any]] = []
-
-    # Kiểm tra cấu trúc processed: labels/{train,val,test}
-    is_processed = (data_root / "labels" / "train").is_dir()
-    tag = "processed" if is_processed or "processed" in data_root.parts else "raw"
+    is_processed = (data_root / "labels" / "train").is_dir() or "processed" in data_root.parts
 
     if is_processed:
-        print("  Phát hiện cấu trúc processed: labels/{train,val,test}/")
-        for sname in split_names:
-            s_lbl_dir = data_root / "labels" / sname
-            s_img_dir = data_root / "images" / sname
-            s_imgs = list(s_img_dir.glob("*.jpg")) if s_img_dir.is_dir() else []
-            sboxes = _read_yolo_labels(s_lbl_dir, image_size_px=args.image_size)
-            for b in sboxes:
-                b["split"] = sname
-                b["is_augmented"] = ("_aug" in b.get("stem", ""))
-            all_boxes.extend(sboxes)
-            stems = [p.stem for p in s_imgs] if s_imgs else list({b["stem"] for b in sboxes})
-            split_stems[sname] = sorted(stems)
-            split_stats[sname] = (len(stems), len(sboxes))
-    else:
-        flat_lbl_dir = data_root / "labels" if (data_root / "labels").is_dir() else data_root
-        all_boxes = _read_yolo_labels(flat_lbl_dir, image_size_px=args.image_size)
-        stems_all = sorted(list({b["stem"] for b in all_boxes}))
-        split_stems["all"] = stems_all
-        split_stats["all"] = (len(img_paths) if img_paths else len(stems_all), len(all_boxes))
-
-    target_dir = figures_dir / tag if figures_dir.name not in ("raw", "processed") else figures_dir
-    target_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[EDA] Tìm thấy {len(img_paths):,} ảnh, {len(all_boxes):,} box, splits: {list(split_stems.keys())}")
-
-    summary_meta: dict[str, Any] = {
-        "tag": tag,
-        "n_images": len(img_paths),
-        "n_boxes": len(all_boxes),
-        "splits": split_stats,
-    }
-
-    if tag == "raw" or "all" in split_stems:
-        # ── 01. Class distribution ──
-        print("\n[EDA] 01 Class distribution (toàn bộ 52 lớp sắp xếp giảm dần)...")
-        c_res = plot_class_distribution(all_boxes, classes, target_dir / "01_class_distribution.png", tag=tag)
-        summary_meta["classes"] = c_res
-
-        # ── 02. Boxes per Image ──
-        print("\n[EDA] 02 Boxes per label / image distribution...")
-        plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
-
-        # ── 03. Box dimensions ──
-        print("\n[EDA] 03 Box dimensions...")
-        plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
-
-        # ── 04. Box center heatmap ──
-        print("\n[EDA] 04 Box center heatmap...")
-        plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
-
-        # ── 05. dHash + pHash Clusters ──
-        ph_str = f" + pHash 64-bit (Hamming ≤ {args.phash_hamming})" if args.phash_hamming else ""
-        print(f"\n[EDA] 05 Gom cụm dHash 1024-bit (size={args.dhash_size}, Hamming ≤ {args.dhash_hamming}){ph_str}...")
-        cluster_res = cluster_images_dhash(
-            img_paths,
-            hash_size=args.dhash_size,
-            hamming_thresh=args.dhash_hamming,
-            phash_thresh=args.phash_hamming,
+        analyze_processed_dataset(
+            data_root=data_root,
+            figures_dir=args.figures_dir,
+            class_table=args.class_table,
+            image_size=args.image_size,
+            min_box_px=args.min_box_px,
+            num_samples=args.num_samples,
+            quality_samples=args.quality_samples,
+            dhash_size=args.dhash_size,
+            dhash_hamming=args.dhash_hamming,
         )
-        plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag=tag)
-        summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}
-        with open(target_dir / "dhash_clusters.json", "w", encoding="utf-8") as f:
-            json.dump(cluster_res, f, ensure_ascii=False, indent=2)
-
-        # ── 06. Tiny box candidates ──
-        print("\n[EDA] 06 Tiny box candidates...")
-        plot_tiny_box_candidates(all_boxes, target_dir, min_box_px=args.min_box_px, image_size=args.image_size, tag=tag)
-
-        # ── 07. Brightness & Sharpness ──
-        print(f"\n[EDA] 07 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
-        q_res = analyze_and_plot_brightness_sharpness(img_paths, target_dir, max_samples=args.quality_samples, tag=tag, fig_num=7)
-        summary_meta["quality"] = q_res
-
-        # ── 08. Demo n ảnh mẫu ──
-        print(f"\n[EDA] 08 Demo {args.num_samples} ảnh mẫu kèm label...")
-        plot_sample_labeled_images(data_root, all_boxes, classes, target_dir, num_samples=args.num_samples, seed=42, tag=tag, fig_num=8)
-
     else:
-        # ── 01. Class distribution (3 subplot: Train Real vs Aug, Val, Test) ──
-        print("\n[EDA] 01 Class distribution (3 subplot: Train Real vs Aug, Val, Test)...")
-        c_res = plot_class_distribution(all_boxes, classes, target_dir / "01_class_distribution.png", tag=tag)
-        summary_meta["classes"] = c_res
-
-        # ── 02. Boxes per Image ──
-        print("\n[EDA] 02 Boxes per label / image distribution...")
-        plot_boxes_per_image(data_root, all_boxes, target_dir, tag=tag)
-
-        # ── 03. Box dimensions ──
-        print("\n[EDA] 03 Box dimensions...")
-        plot_box_dimensions(all_boxes, target_dir, image_size=args.image_size, tag=tag)
-
-        # ── 04. Box center heatmap ──
-        print("\n[EDA] 04 Box center heatmap...")
-        plot_box_center_heatmap(all_boxes, target_dir, tag=tag)
-
-        # ── 05. Images per split ──
-        print("\n[EDA] 05 Images per split...")
-        plot_images_per_split(split_stats, target_dir, tag=tag)
-
-        # ── 06. Tiny box candidates ──
-        print("\n[EDA] 06 Tiny box candidates...")
-        plot_tiny_box_candidates(all_boxes, target_dir, min_box_px=args.min_box_px, image_size=args.image_size, tag=tag)
-
-        # ── 07. Data leakage check (loại bỏ padding xám 114) ──
-        print(f"\n[EDA] 07 Data leakage check (dHash size={args.dhash_size}, Hamming ≤ {args.dhash_hamming}, bỏ viền xám)...")
-        leak_data = check_data_leakage(split_stems, stem_to_path, hash_size=args.dhash_size, hamming_thresh=args.dhash_hamming)
-        plot_data_leakage(leak_data, target_dir / "07_data_leakage.png", tag=tag)
-        summary_meta["leakage"] = {k: v for k, v in leak_data.items() if k not in ("min_dists",)}
-
-        # ── 08. Brightness & Sharpness ──
-        print(f"\n[EDA] 08 Brightness & Sharpness (mẫu {min(args.quality_samples, len(img_paths))} ảnh)...")
-        q_res = analyze_and_plot_brightness_sharpness(img_paths, target_dir, max_samples=args.quality_samples, tag=tag, fig_num=8)
-        summary_meta["quality"] = q_res
-
-        # ── 09. Demo n ảnh mẫu ──
-        print(f"\n[EDA] 09 Demo {args.num_samples} ảnh mẫu kèm label...")
-        plot_sample_labeled_images(data_root, all_boxes, classes, target_dir, num_samples=args.num_samples, seed=42, tag=tag, fig_num=9)
-
-    # Lưu tóm tắt thống kê eda_summary.json
-    summary_path = target_dir / "eda_summary.json"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary_meta, f, indent=2, ensure_ascii=False)
-    print(f"\n[EDA] Đã lưu tóm tắt thống kê: {summary_path}")
-    print(f"[EDA] Hoàn thành phân tích! Toàn bộ biểu đồ đã ghi tại: {target_dir}")
+        analyze_raw_dataset(
+            data_root=data_root,
+            figures_dir=args.figures_dir,
+            class_table=args.class_table,
+            image_size=args.image_size,
+            min_box_px=args.min_box_px,
+            num_samples=args.num_samples,
+            quality_samples=args.quality_samples,
+            dhash_size=args.dhash_size,
+            dhash_hamming=args.dhash_hamming,
+            phash_hamming=args.phash_hamming,
+        )
 
 
 if __name__ == "__main__":
