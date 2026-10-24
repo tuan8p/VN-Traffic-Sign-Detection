@@ -46,9 +46,18 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from collections import defaultdict, Counter
+
 from analysis.image_utils import calculate_dhash
-from analysis.split import split_by_dhash_clusters
-from vn_tsd.data.augmentation import augment_minority_classes, _read_raw_labels, _write_labels
+from analysis.clustering import cluster_images_dhash
+from analysis.split import split_clusters_for_classes, split_by_dhash_clusters
+from vn_tsd.data.augmentation import (
+    augment_minority_classes,
+    _read_raw_labels,
+    _write_labels,
+    get_safe_crop_bounds,
+    transform_and_letterbox_crop,
+)
 
 
 def _load_classes(class_table: Path) -> dict[int, str]:
@@ -149,9 +158,44 @@ def _write_data_yaml(out_root: Path, classes: dict[int, str]) -> None:
     with open(out_root / "data.yaml", "w", encoding="utf-8") as f:
         f.write("\n".join(content))
 
+def _filter_tiny_boxes(
+    img_paths: list[Path],
+    lbl_dir: Path,
+    min_box_px: int = 8,
+    target_size: tuple[int, int] = (640, 640),
+) -> tuple[dict[str, list[tuple[int, float, float, float, float]]], int, int]:
+    """BƯỚC 1: Lọc bỏ toàn bộ box nhỏ (< min_box_px) trên canvas target_size."""
+    clean_boxes = {}
+    total_in = 0
+    total_dropped = 0
+    tw, th = target_size
+
+    for p in img_paths:
+        stem = p.stem
+        raw_b = _read_raw_labels(lbl_dir / f"{stem}.txt")
+        total_in += len(raw_b)
+
+        orig_w, orig_h = 960, 540
+        try:
+            with Image.open(p) as im:
+                orig_w, orig_h = im.size
+        except Exception:
+            pass
+        scale = min(tw / orig_w, th / orig_h)
+
+        kept = []
+        for cid, cx, cy, bw, bh in raw_b:
+            if (bw * orig_w * scale >= min_box_px) and (bh * orig_h * scale >= min_box_px):
+                kept.append((cid, cx, cy, bw, bh))
+            else:
+                total_dropped += 1
+        clean_boxes[stem] = kept
+
+    return clean_boxes, total_in, total_dropped
+
 
 def preprocess_dataset_offline(
-    data_root: str | Path,
+    data_root: str | Path = "data/raw",
     out_root: str | Path = "data/processed",
     class_table: str | Path = "configs/classes.csv",
     image_size: tuple[int, int] = (640, 640),
@@ -165,7 +209,13 @@ def preprocess_dataset_offline(
     phash_thresh: int | None = 10,
     seed: int = 42,
 ) -> Path:
-    """Pipeline tiền xử lý offline: phân cụm toàn bộ ảnh thô và chia split theo cụm độc lập."""
+    """Pipeline tiền xử lý offline 5 BƯỚC chuẩn xác:
+      B1: Xóa các box nhỏ (< min_box_px)
+      B2: Tính gom cụm (dHash + pHash) và chia
+      B3: Đảm bảo train luôn có đầy đủ class (52/52 lớp, 100% Cluster Isolation)
+      B4: Tạo augment trong train (cân bằng nhãn thiểu số)
+      B5: Resize ảnh (Letterbox 640x640) & xuất data.yaml, meta.json
+    """
     data_root = Path(data_root)
     out_root = Path(out_root)
     class_table = Path(class_table)
@@ -191,27 +241,42 @@ def preprocess_dataset_offline(
 
     stem_to_imgpath = {p.stem: p for p in all_img_paths}
     all_stems = sorted(stem_to_imgpath.keys())
+    t0 = time.time()
 
-    # ── BƯỚC 1 & 2: Phân cụm dHash trực tiếp từ ảnh và chia split theo cụm (không dùng split có sẵn) ──
+    # ── BƯỚC 1: Xóa các bounding box nhỏ (< min_box_px) ──
     print("[preprocess] ========================================================")
-    print(f"[preprocess] BƯỚC 1: Phân cụm toàn bộ ảnh thô bằng dHash (size={hash_size}, Hamming <= {hamming_thresh}) + pHash...")
-    print(f"[preprocess] BƯỚC 2: Phân chia cụm vào Train/Val/Test (lọc box < {min_box_px}px, đảm bảo đủ 52/52 lớp)...")
-    print("[preprocess]         QUY TẮC: Mọi ảnh trong cùng 1 cụm PHẢI thuộc cùng 1 tập (100% Cluster Isolation)!")
-    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 1: Xoá các bounding box nhỏ (< {min_box_px}px)...")
+    clean_boxes, total_boxes_in, total_dropped_tiny = _filter_tiny_boxes(
+        all_img_paths, lbl_dir, min_box_px=min_box_px, target_size=image_size
+    )
+    total_valid_boxes = sum(len(b) for b in clean_boxes.values())
+    print(f"[preprocess]   Đã quét {len(all_img_paths):,} ảnh: loại bỏ {total_dropped_tiny:,} box nhỏ (< {min_box_px}px), giữ lại {total_valid_boxes:,} box hợp lệ.")
 
-    splits = split_by_dhash_clusters(
-        img_paths=all_img_paths,
-        lbl_dir=lbl_dir,
-        ratio=ratio,
+    # ── BƯỚC 2: Tính gom cụm ──
+    print("[preprocess] ========================================================")
+    ph_str = f" + pHash 64-bit (Hamming <= {phash_thresh})" if phash_thresh else ""
+    print(f"[preprocess] BƯỚC 2: Tính gom cụm bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){ph_str}...")
+    cluster_res = cluster_images_dhash(
+        all_img_paths,
         hash_size=hash_size,
         hamming_thresh=hamming_thresh,
         phash_thresh=phash_thresh,
-        min_box_px=min_box_px,
-        image_size=image_size,
+    )
+    clusters = cluster_res.get("clusters", {})
+    print(f"[preprocess]   Tìm thấy {len(clusters):,} cụm tương đồng bối cảnh từ {len(all_img_paths):,} ảnh thô.")
+
+    # ── BƯỚC 3: Đảm bảo train luôn có đầy đủ class ──
+    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 3: Đảm bảo tập Train luôn có đầy đủ class (52/52 lớp, 100% Cluster Isolation)...")
+    stem_to_classes = {s: [b[0] for b in boxes] for s, boxes in clean_boxes.items()}
+    splits = split_clusters_for_classes(
+        clusters=clusters,
+        stem_to_classes=stem_to_classes,
+        img_paths=all_img_paths,
+        ratio=ratio,
         seed=seed,
     )
 
-    # Kiểm tra an toàn: Đảm bảo các tập hoàn toàn không giao nhau (rời rạc tuyệt đối)
     tr_set = set(splits["train"])
     va_set = set(splits["val"])
     te_set = set(splits["test"])
@@ -219,9 +284,12 @@ def preprocess_dataset_offline(
     assert tr_set.isdisjoint(te_set), "LỖI: Có ảnh xuất hiện đồng thời trong Train và Test!"
     assert va_set.isdisjoint(te_set), "LỖI: Có ảnh xuất hiện đồng thời trong Val và Test!"
     assert len(tr_set) + len(va_set) + len(te_set) == len(all_stems), "LỖI: Tổng số ảnh split không khớp tổng số ảnh gốc!"
-    print(f"[preprocess] Xác nhận phân tách hoàn tất: Train={len(tr_set):,}, Val={len(va_set):,}, Test={len(te_set):,} (100% độc lập cụm).")
 
-    # Lưu lại danh sách split vừa phân chia vào out_root (data/processed/), tuyệt đối không ghi vào data/raw
+    tr_classes = {b[0] for s in splits["train"] for b in clean_boxes[s]}
+    assert len(tr_classes) == len(classes), f"LỖI: Tập train chỉ có {len(tr_classes)}/{len(classes)} lớp!"
+    print(f"[preprocess]   Phân bổ hoàn tất: Train={len(tr_set):,} ảnh (đủ {len(tr_classes)}/52 lớp), Val={len(va_set):,} ảnh, Test={len(te_set):,} ảnh (100% độc lập cụm).")
+
+    # Lưu lại danh sách split vừa phân chia vào out_root (data/processed/)
     split_save_dir = out_root / "split_files"
     split_save_dir.mkdir(parents=True, exist_ok=True)
     for sname in ("train", "val", "test"):
@@ -231,7 +299,135 @@ def preprocess_dataset_offline(
         with open(out_root / f"{sname}_files.txt", "w", encoding="utf-8") as f:
             f.writelines(lines)
 
-    # ── Xoá sạch thư mục đích để tránh file cũ còn sót lại ──
+    # ── BƯỚC 4: Tạo augment trong tập Train (cân bằng nhãn thiểu số) ──
+    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 4: Tạo augment trong tập Train (cân bằng nhãn thiểu số)...")
+    aug_items: list[tuple[str, np.ndarray, list[tuple[int, float, float, float, float]]]] = []
+    aug_stats = {"n_augmented_images": 0, "n_augmented_boxes": 0}
+
+    if augment_minority and "train" in splits:
+        rng = random.Random(seed)
+        train_class_counts: Counter[int] = Counter()
+        class_candidates: dict[int, list[tuple[str, tuple[int, float, float, float, float], tuple[float, float, float, float]]]] = defaultdict(list)
+
+        for s in splits["train"]:
+            boxes = clean_boxes[s]
+            p = stem_to_imgpath[s]
+            orig_w, orig_h = 960, 540
+            try:
+                with Image.open(p) as im:
+                    orig_w, orig_h = im.size
+            except Exception:
+                pass
+
+            for i, b in enumerate(boxes):
+                train_class_counts[b[0]] += 1
+                other_b = [other for j, other in enumerate(boxes) if j != i and other[0] != b[0]]
+                bounds = get_safe_crop_bounds(b, other_b, orig_w, orig_h)
+                if bounds is not None:
+                    class_candidates[b[0]].append((s, b, bounds))
+
+        # Xác định mục tiêu augment cho từng class
+        class_targets: dict[int, int] = {}
+        policy_str = str(minority_target_boxes).strip().lower()
+        if policy_str in ("adaptive", "ratio", "tier", "multiplier"):
+            for cid, cnt in train_class_counts.items():
+                if cnt < 30:
+                    class_targets[cid] = max(int(round(cnt * 2.5)), min(15, cnt * 3))
+                elif cnt <= 150:
+                    class_targets[cid] = int(round(cnt * 1.75))
+                else:
+                    class_targets[cid] = cnt
+        elif policy_str in ("max", "-1", "none"):
+            max_c = max(train_class_counts.values()) if train_class_counts else 0
+            for cid in train_class_counts:
+                class_targets[cid] = max_c
+        else:
+            fixed_t = int(minority_target_boxes)
+            for cid, cnt in train_class_counts.items():
+                class_targets[cid] = max(cnt, fixed_t)
+
+        max_augmented_per_class = 7
+        class_needed = {
+            c: min(class_targets[c] - train_class_counts[c], max_augmented_per_class)
+            for c in train_class_counts
+            if class_targets[c] > train_class_counts[c]
+        }
+
+        print(f"[preprocess]   Cần sinh thêm cho {len(class_needed)} lớp thiểu số trong Train (trần tối đa: {max_augmented_per_class} ảnh/lớp)...")
+
+        # Tiền tính dHash của val và test để chống rò rỉ dữ liệu
+        val_test_hashes = []
+        for sname in ("val", "test"):
+            for s in splits[sname]:
+                h = calculate_dhash(stem_to_imgpath[s], hash_size=32, strip_padding=True)
+                if h is not None:
+                    val_test_hashes.append(h)
+        val_test_packed = np.packbits(np.array(val_test_hashes, dtype=np.uint8), axis=1) if val_test_hashes else None
+        popcount = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
+
+        img_cache: dict[str, np.ndarray] = {}
+        def _get_img(st: str) -> np.ndarray | None:
+            if st in img_cache:
+                return img_cache[st]
+            im = cv2.imread(str(stem_to_imgpath[st]))
+            if len(img_cache) < 200:
+                img_cache[st] = im
+            return im
+
+        aug_per_class: Counter[int] = Counter()
+        for cid, needed in class_needed.items():
+            candidates = class_candidates.get(cid, [])
+            if not candidates:
+                continue
+            cands_pool = list(candidates)
+            rng.shuffle(cands_pool)
+            gen = 0
+            attempts = 0
+            while gen < needed and attempts < needed * 20:
+                attempts += 1
+                stem, b, bounds = cands_pool[(attempts - 1) % len(cands_pool)]
+                img = _get_img(stem)
+                if img is None:
+                    continue
+                canvas, final_box = transform_and_letterbox_crop(
+                    img=img,
+                    target_box=b,
+                    safe_bounds=bounds,
+                    rng=rng,
+                    target_size=image_size,
+                    min_box_px=min_box_px,
+                    pad_value=pad_value,
+                )
+                if canvas is None or final_box is None:
+                    continue
+
+                if val_test_packed is not None:
+                    h_aug = calculate_dhash(canvas, hash_size=32, strip_padding=True)
+                    if h_aug is not None:
+                        packed_aug = np.packbits(h_aug)
+                        diff = np.bitwise_xor(val_test_packed, packed_aug)
+                        dists = popcount[diff].sum(axis=1)
+                        if dists.min() <= 374:
+                            continue
+
+                gen += 1
+                aug_stem = f"{stem}_aug_{cid}_{gen}"
+                aug_items.append((aug_stem, canvas, [final_box]))
+                aug_per_class[cid] += 1
+
+        aug_stats = {
+            "n_augmented_images": len(aug_items),
+            "n_augmented_boxes": len(aug_items),
+            "n_augmented_classes": len(aug_per_class),
+        }
+        print(f"[preprocess]   Hoàn tất: Đã sinh thêm {len(aug_items)} ảnh và {len(aug_items)} box cho {len(aug_per_class)} lớp trong tập Train.")
+
+    # ── BƯỚC 5: Resize ảnh về 640×640 (Letterbox) ──
+    print("[preprocess] ========================================================")
+    print(f"[preprocess] BƯỚC 5: Resize toàn bộ ảnh về {image_size[0]}×{image_size[1]} (Letterbox, pad={pad_value}) & xuất data.yaml, meta.json...")
+
+    # Xoá sạch thư mục đích để tránh file cũ còn sót lại
     for sub in ("images", "labels"):
         d = out_root / sub
         if d.exists():
@@ -240,7 +436,6 @@ def preprocess_dataset_offline(
         for sname in ("train", "val", "test"):
             (d / sname).mkdir(parents=True, exist_ok=True)
 
-    t0 = time.time()
     meta: dict[str, Any] = {
         "dataset_name": "VN-Traffic-Sign-Detection-Processed",
         "source_data_root": str(data_root),
@@ -253,10 +448,6 @@ def preprocess_dataset_offline(
     }
 
     total_kept = 0
-    total_dropped_tiny = 0
-
-    # ── BƯỚC 3: Xử lý letterbox và lọc box nhỏ trên từng split ──
-    print(f"\n[preprocess] BƯỚC 3: Chuẩn hoá kích thước (Letterbox {image_size[0]}×{image_size[1]}, pad={pad_value}) & lọc bỏ box < {min_box_px}px...")
     for sname, stems in splits.items():
         dst_img_dir = out_root / "images" / sname
         dst_lbl_dir = out_root / "labels" / sname
@@ -267,9 +458,7 @@ def preprocess_dataset_offline(
 
         for stem in stems:
             src_img_p = stem_to_imgpath[stem]
-            src_lbl_p = lbl_dir / f"{stem}.txt"
-
-            raw_boxes = _read_raw_labels(src_lbl_p)
+            raw_boxes = _read_raw_labels(lbl_dir / f"{stem}.txt")
             n_boxes_in += len(raw_boxes)
 
             img = cv2.imread(str(src_img_p))
@@ -280,9 +469,9 @@ def preprocess_dataset_offline(
             canvas, scale, dx, dy = _letterbox_image(img, image_size, pad_value)
 
             adj_boxes, tiny_cnt = _adjust_boxes(
-                raw_boxes, orig_w, orig_h, scale, dx, dy, image_size[0], image_size[1], min_box_px
+                clean_boxes[stem], orig_w, orig_h, scale, dx, dy, image_size[0], image_size[1], min_box_px
             )
-            n_tiny_dropped += tiny_cnt
+            n_tiny_dropped += (len(raw_boxes) - len(adj_boxes))
             n_boxes_out += len(adj_boxes)
 
             cv2.imwrite(str(dst_img_dir / f"{stem}.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -295,45 +484,28 @@ def preprocess_dataset_offline(
             "n_tiny_dropped": n_tiny_dropped,
         }
         total_kept += n_boxes_out
-        total_dropped_tiny += n_tiny_dropped
         print(f"[preprocess]   {sname}: {len(stems)} ảnh, {n_boxes_out}/{n_boxes_in} box giữ lại ({n_tiny_dropped} tiny bỏ)")
 
-    # ── BƯỚC 4: Tăng cường dữ liệu cho các lớp thiểu số trong tập train (nếu bật) ──
-    if augment_minority and "train" in splits:
-        print(f"\n[preprocess] BƯỚC 4: Cân bằng nhãn thiểu số (Data Augmentation) cho tập Train (max 7 ảnh/lớp, blur nhẹ, không xoay)...")
-        # Tiền tính toán mã dHash của val và test để kiểm tra rò rỉ trong quá trình sinh ảnh augmented
-        val_test_hashes = []
-        for s in ("val", "test"):
-            s_dir = out_root / "images" / s
-            for p in s_dir.glob("*.jpg"):
-                h = calculate_dhash(p, hash_size=32, strip_padding=True)
-                if h is not None:
-                    val_test_hashes.append(h)
+    # Ghi toàn bộ ảnh và nhãn augmented vào tập Train
+    if aug_items:
+        train_img_dir = out_root / "images" / "train"
+        train_lbl_dir = out_root / "labels" / "train"
+        for aug_stem, canvas, aug_boxes in aug_items:
+            cv2.imwrite(str(train_img_dir / f"{aug_stem}.jpg"), canvas, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            _write_labels(train_lbl_dir / f"{aug_stem}.txt", aug_boxes)
 
-        val_test_packed = np.packbits(np.array(val_test_hashes, dtype=np.uint8), axis=1) if val_test_hashes else None
-
-        aug_stats = augment_minority_classes(
-            train_img_dir=out_root / "images" / "train",
-            train_lbl_dir=out_root / "labels" / "train",
-            val_test_packed=val_test_packed,
-            target_min_boxes=minority_target_boxes,
-            image_size=image_size,
-            min_box_px=min_box_px,
-            pad_value=pad_value,
-            seed=seed,
-        )
-        meta["splits"]["train"]["n_images"] += aug_stats["n_augmented_images"]
-        meta["splits"]["train"]["n_boxes_out"] += aug_stats["n_augmented_boxes"]
+        meta["splits"]["train"]["n_images"] += len(aug_items)
+        meta["splits"]["train"]["n_boxes_out"] += len(aug_items)
         meta["minority_augmentation"] = aug_stats
-        total_kept += aug_stats["n_augmented_boxes"]
+        total_kept += len(aug_items)
+        print(f"[preprocess]   train (+augmented): {meta['splits']['train']['n_images']} ảnh tổng cộng ({len(aug_items)} ảnh augmented).")
 
     elapsed = time.time() - t0
     meta["total_dropped_tiny"] = total_dropped_tiny
     meta["total_boxes_kept"] = total_kept
     meta["elapsed_seconds"] = round(elapsed, 2)
 
-    # ── BƯỚC 5: Ghi data.yaml và meta.json ──
-    print(f"\n[preprocess] BƯỚC 5: Ghi cấu hình huấn luyện data.yaml & lưu metadata meta.json...")
+    # Ghi data.yaml và meta.json
     _write_data_yaml(out_root, classes)
     print(f"[preprocess] data.yaml ghi tại: {out_root / 'data.yaml'}")
 
@@ -341,9 +513,10 @@ def preprocess_dataset_offline(
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
     print(f"[preprocess] meta.json ghi tại: {meta_path}")
-    print(f"[preprocess] Hoàn thành trong {elapsed:.1f}s  →  {out_root}")
+    print(f"[preprocess] Hoàn thành toàn bộ quy trình tiền xử lý trong {elapsed:.1f}s  →  {out_root}")
 
     return out_root
+
 
 
 def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Path:
