@@ -1,10 +1,9 @@
-"""Module chuyên trách phân tích và vẽ biểu đồ rò rỉ dữ liệu (Data Leakage).
+"""Module chuyên trách phân tích và vẽ biểu đồ rò rỉ dữ liệu (Data Leakage) bằng dHash.
 
 Đặc điểm quan trọng:
   - Tự động loại bỏ hoàn toàn viền xám (114) sinh ra khi letterbox-resize
     để không nhận nhầm vùng xám là tương đồng nội dung.
-  - Kết hợp đồng thời dHash (size=32, Hamming <= 380) và pHash (size=8, Hamming <= 18)
-    như toàn bộ quá trình gom cụm dữ liệu.
+  - Sử dụng dHash thuần túy (size=32 -> 1024-bit) để đánh giá tương đồng bối cảnh cục bộ.
   - Loại bỏ các câu chữ kết luận dài dòng trong biểu đồ theo yêu cầu người dùng.
 """
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 import numpy as np
 import matplotlib.pyplot as plt
 
-from analysis.helpers.image_utils import calculate_dhash_and_phash
+from analysis.helpers.image_utils import calculate_dhash
 
 
 def check_data_leakage(
@@ -22,42 +21,33 @@ def check_data_leakage(
     stem_to_path: dict[str, Path],
     hash_size: int = 32,
     hamming_thresh: int = 362,
-    phash_size: int = 8,
-    phash_thresh: int = 10,
 ) -> dict[str, Any]:
-    """Khảo sát rò rỉ dữ liệu kết hợp dHash và pHash giữa tất cả các cặp split (train, val, test).
+    """Khảo sát rò rỉ dữ liệu sử dụng dHash thuần túy giữa tất cả các cặp split (train, val, test).
 
     Ngưỡng dHash mặc định 362 bit đã được chuẩn hóa theo tỷ lệ co rút khoảng cách sau Letterbox
     Resize 640x640 (tương đương với ngưỡng 380 bit trên ảnh gốc RAW).
-    pHash (ngưỡng 10) đóng vai trò phụ trợ nhận dạng trùng lặp ở vùng biên khoảng cách.
     """
     splits = [s for s in ("train", "val", "test") if s in split_stems and split_stems[s]]
     n_splits = len(splits)
     if n_splits < 2:
         return {"status": "SKIPPED_NOT_ENOUGH_SPLITS"}
 
-    # 1. Tính mã băm dHash và pHash (bỏ viền xám 114) cho từng split
+    # 1. Tính mã băm dHash (bỏ viền xám 114) cho từng split
     dhash_cache: dict[str, np.ndarray | None] = {}
-    phash_cache: dict[str, np.ndarray | None] = {}
 
-    def _get_hashes(stem: str) -> tuple[np.ndarray | None, np.ndarray | None]:
+    def _get_hash(stem: str) -> np.ndarray | None:
         if stem in dhash_cache:
-            return dhash_cache[stem], phash_cache.get(stem)
+            return dhash_cache[stem]
         p = stem_to_path.get(stem)
         if not p or not p.exists():
             dhash_cache[stem] = None
-            phash_cache[stem] = None
-            return None, None
-        hd, hp = calculate_dhash_and_phash(
-            p, dhash_size=hash_size, phash_size=phash_size, strip_padding=True
-        )
+            return None
+        hd = calculate_dhash(p, hash_size=hash_size, strip_padding=True)
         dhash_cache[stem] = hd
-        phash_cache[stem] = hp
-        return hd, hp
+        return hd
 
     split_valid_stems: dict[str, list[str]] = {}
     split_packed_d: dict[str, np.ndarray] = {}
-    split_packed_p: dict[str, np.ndarray] = {}
     max_check_per_split = 2500
 
     for s in splits:
@@ -75,23 +65,19 @@ def check_data_leakage(
 
         valid: list[str] = []
         d_list: list[np.ndarray] = []
-        p_list: list[np.ndarray] = []
         for st in stems_to_eval:
-            hd, hp = _get_hashes(st)
-            if hd is not None and hp is not None:
+            hd = _get_hash(st)
+            if hd is not None:
                 valid.append(st)
                 d_list.append(hd)
-                p_list.append(hp)
 
         split_valid_stems[s] = valid
         if valid:
             split_packed_d[s] = np.packbits(np.array(d_list, dtype=np.uint8), axis=1)
-            split_packed_p[s] = np.packbits(np.array(p_list, dtype=np.uint8), axis=1)
         else:
             split_packed_d[s] = np.zeros((0, (hash_size * hash_size) // 8), dtype=np.uint8)
-            split_packed_p[s] = np.zeros((0, (phash_size * phash_size) // 8), dtype=np.uint8)
 
-    # 2. Xây dựng ma trận khoảng cách Hamming (kết hợp dHash và pHash)
+    # 2. Xây dựng ma trận khoảng cách Hamming dHash
     popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
     leak_matrix = np.zeros((n_splits, n_splits), dtype=int)
     leak_pair_matrix = np.zeros((n_splits, n_splits), dtype=int)
@@ -107,21 +93,13 @@ def check_data_leakage(
 
             p1_d = split_packed_d.get(s1)
             p2_d = split_packed_d.get(s2)
-            p1_p = split_packed_p.get(s1)
-            p2_p = split_packed_p.get(s2)
             if p1_d is None or p2_d is None or len(p1_d) == 0 or len(p2_d) == 0:
                 continue
 
             xor_d = np.bitwise_xor(p1_d[:, None, :], p2_d[None, :, :])
             dist_d = popcount[xor_d].sum(axis=2)
 
-            xor_p = np.bitwise_xor(p1_p[:, None, :], p2_p[None, :, :])
-            dist_p = popcount[xor_p].sum(axis=2)
-
-            # Tiêu chí rò rỉ chuẩn xác:
-            # 1. dHash <= hamming_thresh (khoảng cách bối cảnh cực gần sau resize letterbox 640)
-            # 2. HOẶC dHash <= hamming_thresh + 8 VÀ pHash <= phash_thresh (bối cảnh gần + tần số thấp trùng lặp)
-            leaked_mask = (dist_d <= hamming_thresh) | ((dist_d <= (hamming_thresh + 8)) & (dist_p <= phash_thresh))
+            leaked_mask = (dist_d <= hamming_thresh)
             leaked_i, leaked_j = np.where(leaked_mask)
             n_pairs = len(leaked_i)
             n_unique_s1 = len(np.unique(leaked_i))
@@ -151,39 +129,28 @@ def check_data_leakage(
                         "split_b": s2,
                         "image_b": stem_to_path[st2].name if st2 in stem_to_path else f"{st2}.jpg",
                         "hamming_dhash": int(dist_d[idx1, idx2]),
-                        "hamming_phash": int(dist_p[idx1, idx2]),
                     })
 
     # 3. Đánh giá riêng chi tiết Test vs Train
     dhash_test_to_train: dict[str, Any] = {}
     min_dists_d: np.ndarray | None = None
-    min_dists_p: np.ndarray | None = None
     if "train" in split_packed_d and "test" in split_packed_d:
         p_tr_d = split_packed_d["train"]
         p_te_d = split_packed_d["test"]
-        p_tr_p = split_packed_p["train"]
-        p_te_p = split_packed_p["test"]
         if len(p_tr_d) > 0 and len(p_te_d) > 0:
             xor_te_tr_d = np.bitwise_xor(p_te_d[:, None, :], p_tr_d[None, :, :])
             dist_te_tr_d = popcount[xor_te_tr_d].sum(axis=2)
             min_dists_d = dist_te_tr_d.min(axis=1)
 
-            xor_te_tr_p = np.bitwise_xor(p_te_p[:, None, :], p_tr_p[None, :, :])
-            dist_te_tr_p = popcount[xor_te_tr_p].sum(axis=2)
-            min_dists_p = dist_te_tr_p.min(axis=1)
-
-            is_near_dup = (dist_te_tr_d <= hamming_thresh) | ((dist_te_tr_d <= (hamming_thresh + 8)) & (dist_te_tr_p <= phash_thresh))
+            is_near_dup = (dist_te_tr_d <= hamming_thresh)
             n_near_thresh = int(np.count_nonzero(is_near_dup.any(axis=1)))
             pct_near_thresh = float(n_near_thresh / len(min_dists_d) * 100)
             dhash_test_to_train = {
                 "min_hamming_dhash": int(min_dists_d.min()),
                 "median_hamming_dhash": float(np.median(min_dists_d)),
-                "min_hamming_phash": int(min_dists_p.min()),
-                "median_hamming_phash": float(np.median(min_dists_p)),
                 "near_duplicates_count": n_near_thresh,
                 "near_duplicates_pct": round(pct_near_thresh, 2),
                 "dhash_threshold": hamming_thresh,
-                "phash_threshold": phash_thresh,
             }
 
     total_leaks = len(all_leak_pairs)
@@ -193,8 +160,6 @@ def check_data_leakage(
         "status": status,
         "hash_size": hash_size,
         "dhash_threshold": hamming_thresh,
-        "phash_size": phash_size,
-        "phash_threshold": phash_thresh,
         "splits": splits,
         "split_stems": split_stems,
         "total_leak_pairs": total_leaks,
@@ -204,7 +169,6 @@ def check_data_leakage(
         "dhash_test_to_train": dhash_test_to_train,
         "leak_pairs": all_leak_pairs,
         "min_dists": min_dists_d,
-        "min_dists_phash": min_dists_p,
     }
 
 
@@ -214,25 +178,21 @@ def find_leaked_test_stems(
     stem_to_path: dict[str, Path],
     hash_size: int = 32,
     hamming_thresh: int = 362,
-    phash_size: int = 8,
-    phash_thresh: int = 10,
 ) -> tuple[list[str], list[str]]:
-    """Phát hiện và phân tách các stem trong test split thành clean và leaked dựa trên cả dHash & pHash."""
-    tr_d, tr_p = [], []
+    """Phát hiện và phân tách các stem trong test split thành clean và leaked dựa trên dHash."""
+    tr_d = []
     for s in train_stems:
         if s in stem_to_path:
-            hd, hp = calculate_dhash_and_phash(stem_to_path[s], dhash_size=hash_size, phash_size=phash_size, strip_padding=True)
-            if hd is not None and hp is not None:
+            hd = calculate_dhash(stem_to_path[s], hash_size=hash_size, strip_padding=True)
+            if hd is not None:
                 tr_d.append(hd)
-                tr_p.append(hp)
 
-    te_d, te_p, valid_te_stems = [], [], []
+    te_d, valid_te_stems = [], []
     for s in test_stems:
         if s in stem_to_path:
-            hd, hp = calculate_dhash_and_phash(stem_to_path[s], dhash_size=hash_size, phash_size=phash_size, strip_padding=True)
-            if hd is not None and hp is not None:
+            hd = calculate_dhash(stem_to_path[s], hash_size=hash_size, strip_padding=True)
+            if hd is not None:
                 te_d.append(hd)
-                te_p.append(hp)
                 valid_te_stems.append(s)
 
     if not tr_d or not te_d:
@@ -240,17 +200,12 @@ def find_leaked_test_stems(
 
     tr_packed_d = np.packbits(np.array(tr_d, dtype=np.uint8), axis=1)
     te_packed_d = np.packbits(np.array(te_d, dtype=np.uint8), axis=1)
-    tr_packed_p = np.packbits(np.array(tr_p, dtype=np.uint8), axis=1)
-    te_packed_p = np.packbits(np.array(te_p, dtype=np.uint8), axis=1)
     popcount = np.array([bin(k).count("1") for k in range(256)], dtype=np.uint8)
 
     xor_d = np.bitwise_xor(te_packed_d[:, None, :], tr_packed_d[None, :, :])
     dist_d = popcount[xor_d].sum(axis=2)
 
-    xor_p = np.bitwise_xor(te_packed_p[:, None, :], tr_packed_p[None, :, :])
-    dist_p = popcount[xor_p].sum(axis=2)
-
-    is_leaked_matrix = (dist_d <= hamming_thresh) | ((dist_d <= (hamming_thresh + 8)) & (dist_p <= phash_thresh))
+    is_leaked_matrix = (dist_d <= hamming_thresh)
     is_leaked_test = is_leaked_matrix.any(axis=1)
 
     clean_stems: list[str] = []
@@ -269,22 +224,20 @@ def plot_data_leakage(
     out_path: Path,
     tag: str = "",
 ) -> None:
-    """Vẽ Figure 07: Ma trận Trùng lặp Overlap và Histogram khoảng cách Hamming."""
+    """Vẽ Figure 07: Ma trận Trùng lặp Overlap và Histogram khoảng cách Hamming dHash."""
     splits = leak_data.get("splits", ["train", "val", "test"])
     n_splits = len(splits)
     leak_pair_matrix = np.array(leak_data.get("leak_pair_matrix", np.zeros((n_splits, n_splits))))
     leak_matrix = np.array(leak_data.get("leak_matrix", np.zeros((n_splits, n_splits))))
     split_stems = leak_data.get("split_stems", {})
     min_dists = leak_data.get("min_dists")
-    hash_size = leak_data.get("hash_size", 32)
-    hamming_thresh = leak_data.get("dhash_threshold", 380)
-    phash_thresh = leak_data.get("phash_threshold", 18)
+    hamming_thresh = leak_data.get("dhash_threshold", 362)
     dhash_test_to_train = leak_data.get("dhash_test_to_train", {})
 
     fig, axes = plt.subplots(1, 2, figsize=(18, 7.5))
     title_suffix = f" – {tag.upper()}" if tag else ""
     fig.suptitle(
-        f"07. Đánh giá Rò rỉ Dữ liệu (dHash ≤ {hamming_thresh} kết hợp pHash ≤ {phash_thresh}){title_suffix}",
+        f"07. Đánh giá Rò rỉ Dữ liệu (dHash ≤ {hamming_thresh}){title_suffix}",
         fontsize=14,
         fontweight="bold",
     )
@@ -307,7 +260,7 @@ def plot_data_leakage(
     ax0.set_xticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
     ax0.set_yticklabels([s.upper() for s in splits], fontsize=11, fontweight="bold")
     ax0.set_title(
-        f"1. Ma trận Trùng lặp giữa các Split (dHash ≤ {hamming_thresh} & pHash ≤ {phash_thresh})",
+        f"1. Ma trận Trùng lặp giữa các Split (dHash ≤ {hamming_thresh})",
         fontsize=12,
         fontweight="bold",
     )
@@ -352,7 +305,7 @@ def plot_data_leakage(
         ax1.set_xlabel("Khoảng cách Hamming dHash giữa Test và Train (bit)", fontsize=11)
         ax1.set_ylabel("Số lượng ảnh Test", fontsize=11)
         ax1.set_title(
-            f"2. Phân bố Độ tương đồng Test vs Train (Rò rỉ kết hợp: {pct_val:.2f}%)",
+            f"2. Phân bố Độ tương đồng Test vs Train (Rò rỉ dHash: {pct_val:.2f}%)",
             fontsize=12,
             fontweight="bold",
         )
@@ -366,4 +319,3 @@ def plot_data_leakage(
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_path}")
-

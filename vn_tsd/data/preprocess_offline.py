@@ -164,12 +164,12 @@ def preprocess_dataset_offline(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 380,
-    phash_thresh: int | None = 18,
+    phash_thresh: int | None = None,
     seed: int = 42,
 ) -> Path:
     """Pipeline tiền xử lý offline 5 BƯỚC chuẩn xác:
       B1: Xóa các box nhỏ (< min_box_px)
-      B2: Tính gom cụm (dHash + pHash) và chia
+      B2: Tính gom cụm bằng dHash thuần túy và chia
       B3: Đảm bảo train luôn có đầy đủ class (52/52 lớp, 100% Cluster Isolation)
       B4: Tạo augment trong train (cân bằng nhãn thiểu số)
       B5: Resize ảnh (Letterbox 640x640) & xuất data.yaml, meta.json
@@ -481,7 +481,7 @@ def run_offline(cfg: dict[str, Any], data_root: str | Path | None = None) -> Pat
     )
     hash_sz = int(split_cfg.get("hash_size", 32))
     h_thresh = int(split_cfg.get("hamming_threshold", 380))
-    raw_phash_thresh = split_cfg.get("phash_threshold", 18)
+    raw_phash_thresh = split_cfg.get("phash_threshold", None)
     p_thresh = int(raw_phash_thresh) if (raw_phash_thresh is not None and str(raw_phash_thresh).strip().lower() not in ("none", "false")) else None
 
     d_root = data_root or prep.get("raw_dir", "data/raw")

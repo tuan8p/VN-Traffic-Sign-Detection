@@ -52,8 +52,6 @@ def analyze_processed_dataset(
     quality_samples: int = 1000,
     dhash_size: int = 32,
     dhash_hamming: int = 362,
-    phash_size: int = 8,
-    phash_hamming: int = 10,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Quy trình phân tích chuyên sâu độc lập cho dataset sau tiền xử lý (9 biểu đồ)."""
@@ -123,18 +121,16 @@ def analyze_processed_dataset(
     print("\n[EDA Processed] 06 Tiny box candidates...")
     plot_tiny_box_candidates(all_boxes, target_dir, min_box_px=min_box_px, image_size=image_size, tag="processed")
 
-    # 07. Data leakage check (kết hợp dHash và pHash, loại bỏ padding xám 114)
-    print(f"\n[EDA Processed] 07 Data leakage check (dHash <= {dhash_hamming}, pHash <= {phash_hamming}, bỏ viền xám)...")
+    # 07. Data leakage check (dHash thuần túy, loại bỏ padding xám 114)
+    print(f"\n[EDA Processed] 07 Data leakage check (dHash <= {dhash_hamming}, bỏ viền xám)...")
     leak_data = check_data_leakage(
         split_stems,
         stem_to_path,
         hash_size=dhash_size,
         hamming_thresh=dhash_hamming,
-        phash_size=phash_size,
-        phash_thresh=phash_hamming,
     )
     plot_data_leakage(leak_data, target_dir / "07_data_leakage.png", tag="processed")
-    summary_meta["leakage"] = {k: v for k, v in leak_data.items() if k not in ("min_dists", "min_dists_phash")}
+    summary_meta["leakage"] = {k: v for k, v in leak_data.items() if k != "min_dists"}
 
     # 08. Brightness & Sharpness (phân tách theo từng tập 3x3)
     print(f"\n[EDA Processed] 08 Brightness & Sharpness theo từng tập (mẫu {min(quality_samples, len(img_paths))} ảnh)...")
@@ -170,7 +166,6 @@ def main(argv=None) -> None:
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
     p.add_argument("--dhash-size", type=int, default=32, help="Kích thước cạnh dHash (default: 32 -> 1024 bits)")
     p.add_argument("--dhash-hamming", type=int, default=362, help="Ngưỡng khoảng cách Hamming dHash chuẩn hóa theo resize 640x640 (default: 362)")
-    p.add_argument("--phash-hamming", type=int, default=10, help="Ngưỡng khoảng cách Hamming pHash phụ trợ biên (default: 10)")
     args = p.parse_args(argv)
 
     data_root = Path(args.data_root).resolve()
@@ -188,7 +183,6 @@ def main(argv=None) -> None:
         quality_samples=args.quality_samples,
         dhash_size=args.dhash_size,
         dhash_hamming=args.dhash_hamming,
-        phash_hamming=args.phash_hamming,
     )
 
 

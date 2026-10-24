@@ -218,12 +218,12 @@ def split_by_dhash_clusters(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     hash_size: int = 32,
     hamming_thresh: int = 380,
-    phash_thresh: int | None = 18,
+    phash_thresh: int | None = None,
     min_box_px: int = 8,
     image_size: tuple[int, int] = (640, 640),
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Gom cụm dHash + pHash và phân chia split."""
+    """Gom cụm dHash thuần túy và phân chia split."""
     if not img_paths:
         return {"train": [], "val": [], "test": []}
 

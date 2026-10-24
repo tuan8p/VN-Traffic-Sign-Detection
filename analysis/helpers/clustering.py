@@ -46,7 +46,7 @@ def cluster_images_dhash(
     hash_size: int = 32,
     hamming_thresh: int = 380,
     phash_size: int = 8,
-    phash_thresh: int | None = 18,
+    phash_thresh: int | None = None,
     max_merge_cluster_size: int = 1800,
 ) -> dict[str, Any]:
     """Gom cụm ảnh 2 giai đoạn: dHash (gradient) kết hợp pHash (tần số DCT).
