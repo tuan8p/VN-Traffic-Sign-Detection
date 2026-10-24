@@ -14,7 +14,7 @@ from __future__ import annotations
 import random
 from pathlib import Path
 from typing import Any
-from collections import defaultdict, Counter
+from collections import defaultdict
 import numpy as np
 
 from PIL import Image
@@ -67,60 +67,6 @@ def _read_labels_for_stems(
             continue
     return stem_to_classes
 
-
-def split_by_dhash_clusters(
-    img_paths: list[Path],
-    lbl_dir: Path,
-    ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
-    hash_size: int = 32,
-    hamming_thresh: int = 370,
-    phash_thresh: int | None = 10,
-    min_box_px: int = 8,
-    image_size: tuple[int, int] = (640, 640),
-    seed: int = 42,
-) -> dict[str, list[str]]:
-    """Phân chia split tự động dựa trên kết quả gom cụm dHash + pHash từ ảnh,
-    đã loại bỏ box tiny (< min_box_px) ngay từ trước khi gom cụm/phân chia lớp.
-    """
-    if not img_paths:
-        return {"train": [], "val": [], "test": []}
-
-    phash_str = f" + pHash 64-bit (Hamming <= {phash_thresh})" if phash_thresh else ""
-    print(f"[split] - Gom cụm {len(img_paths):,} ảnh bằng dHash 1024-bit (size={hash_size}, Hamming <= {hamming_thresh}){phash_str}...")
-    cluster_res = cluster_images_dhash(
-        img_paths,
-        hash_size=hash_size,
-        hamming_thresh=hamming_thresh,
-        phash_thresh=phash_thresh,
-    )
-    clusters = cluster_res.get("clusters", {})
-    if not clusters:
-        print("[split] Cảnh báo: Không thể gom cụm, dùng danh sách ảnh phẳng.")
-        stems = [p.stem for p in img_paths]
-        n = len(stems)
-        n_tr = int(n * ratio[0])
-        n_va = int(n * ratio[1])
-        return {
-            "train": stems[:n_tr],
-            "val": stems[n_tr : n_tr + n_va],
-            "test": stems[n_tr + n_va :],
-        }
-
-    total_images = len(img_paths)
-    print(f"[split]   Tìm thấy {len(clusters):,} cụm từ {total_images:,} ảnh.")
-
-    all_stems = [p.stem for p in img_paths]
-    stem_to_path = {p.stem: p for p in img_paths}
-
-    # Đọc nhãn sau khi loại bỏ tiny box (< min_box_px) TRƯỚC khi gom cụm / tính phân bố lớp
-    print(f"[split] - Lọc bỏ box tiny (< {min_box_px}px) trước khi xác định phân bố lớp của các cụm...")
-    stem_to_classes = _read_labels_for_stems(
-        lbl_dir=lbl_dir,
-        stems=all_stems,
-        stem_to_path=stem_to_path,
-        min_box_px=min_box_px,
-        image_size=image_size,
-    )
 
 def split_clusters_for_classes(
     clusters: dict[str, list[str]],
@@ -320,4 +266,3 @@ def split_by_dhash_clusters(
         ratio=ratio,
         seed=seed,
     )
-
