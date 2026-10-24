@@ -50,7 +50,6 @@ def analyze_raw_dataset(
     quality_samples: int = 1000,
     dhash_size: int = 32,
     dhash_hamming: int = 380,
-    phash_hamming: int = 18,
     seed: int = 42,
 ) -> dict[str, Any]:
     """Quy trình phân tích chuyên biệt và xuất đủ 8 biểu đồ cho dataset thô."""
@@ -96,14 +95,13 @@ def analyze_raw_dataset(
     print("\n[EDA Raw] 04 Box center heatmap...")
     plot_box_center_heatmap(all_boxes, target_dir, tag="raw")
 
-    # 05. dHash + pHash Clusters
-    ph_str = f" + pHash 64-bit (Hamming <= {phash_hamming})" if phash_hamming else ""
-    print(f"\n[EDA Raw] 05 Gom cụm dHash 1024-bit (size={dhash_size}, Hamming <= {dhash_hamming}){ph_str}...")
+    # 05. dHash Clusters (thuần túy dHash 1024-bit)
+    print(f"\n[EDA Raw] 05 Gom cụm dHash 1024-bit (size={dhash_size}, Hamming <= {dhash_hamming})...")
     cluster_res = cluster_images_dhash(
         img_paths,
         hash_size=dhash_size,
         hamming_thresh=dhash_hamming,
-        phash_thresh=phash_hamming,
+        phash_thresh=None,
     )
     plot_dhash_clusters(cluster_res, target_dir / "05_dhash_clusters.png", tag="raw")
     summary_meta["clustering"] = {k: v for k, v in cluster_res.items() if k != "clusters"}
@@ -144,7 +142,6 @@ def main(argv=None) -> None:
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
     p.add_argument("--dhash-size", type=int, default=32, help="Kích thước cạnh dHash (default: 32 -> 1024 bits)")
     p.add_argument("--dhash-hamming", type=int, default=380, help="Ngưỡng khoảng cách Hamming dHash gom cụm (default: 380)")
-    p.add_argument("--phash-hamming", type=int, default=18, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (default: 18)")
     args = p.parse_args(argv)
 
     data_root = Path(args.data_root).resolve()
@@ -162,7 +159,6 @@ def main(argv=None) -> None:
         quality_samples=args.quality_samples,
         dhash_size=args.dhash_size,
         dhash_hamming=args.dhash_hamming,
-        phash_hamming=args.phash_hamming,
     )
 
 

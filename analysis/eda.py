@@ -42,7 +42,6 @@ def main(argv=None) -> None:
     p.add_argument("--quality-samples", type=int, default=1000, help="Số ảnh lấy mẫu đo độ sáng/độ nét (default: 1000)")
     p.add_argument("--dhash-size", type=int, default=32, help="Kích thước cạnh dHash (default: 32 -> 1024 bits)")
     p.add_argument("--dhash-hamming", type=int, default=380, help="Ngưỡng khoảng cách Hamming dHash gom cụm (default: 380)")
-    p.add_argument("--phash-hamming", type=int, default=18, help="Ngưỡng khoảng cách Hamming pHash gộp cụm (default: 18)")
     args = p.parse_args(argv)
 
     data_root_str = args.data_root or os.environ.get("DATA_ROOT") or ""
@@ -58,7 +57,6 @@ def main(argv=None) -> None:
 
     if is_processed:
         dhash_h = 362 if args.dhash_hamming == 380 else args.dhash_hamming
-        phash_h = 10 if args.phash_hamming == 18 else args.phash_hamming
         analyze_processed_dataset(
             data_root=data_root,
             figures_dir=args.figures_dir,
@@ -69,7 +67,6 @@ def main(argv=None) -> None:
             quality_samples=args.quality_samples,
             dhash_size=args.dhash_size,
             dhash_hamming=dhash_h,
-            phash_hamming=phash_h,
         )
     else:
         analyze_raw_dataset(
@@ -82,7 +79,6 @@ def main(argv=None) -> None:
             quality_samples=args.quality_samples,
             dhash_size=args.dhash_size,
             dhash_hamming=args.dhash_hamming,
-            phash_hamming=args.phash_hamming,
         )
 
 
