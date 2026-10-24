@@ -308,19 +308,26 @@ class ClusterViewerApp:
         print(f"[GUI] Đã nạp {len(self.img_map)} ảnh từ {img_dir}")
 
     def _load_clusters(self, json_path: Path):
-        if not json_path.exists():
-            messagebox.showwarning(
-                "Chưa có file gom cụm",
-                f"Không tìm thấy file: {json_path}\n\nVui lòng chọn File -> Mở file dhash_clusters.json hoặc chạy phân tích EDA trước."
-            )
-            return
-
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            messagebox.showerror("Lỗi đọc JSON", f"Không thể đọc file {json_path}:\n{e}")
-            return
+        data = None
+        if json_path.exists():
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                messagebox.showerror("Lỗi đọc JSON", f"Không thể đọc file {json_path}:\n{e}")
+                return
+        else:
+            img_paths = list(self.img_map.values())
+            if img_paths:
+                print(f"[GUI] File {json_path.name} không tồn tại. Đang tự động gom cụm dHash trực tiếp từ {len(img_paths)} ảnh...")
+                from analysis.helpers.clustering import cluster_images_dhash
+                data = cluster_images_dhash(img_paths, hash_size=32, hamming_thresh=380)
+            else:
+                messagebox.showwarning(
+                    "Chưa có dữ liệu ảnh",
+                    f"Không tìm thấy ảnh tại {self.data_root / 'images'} để gom cụm."
+                )
+                return
 
         self.metadata = data
         self.stem_to_cluster = data.get("stem_to_cluster", {})

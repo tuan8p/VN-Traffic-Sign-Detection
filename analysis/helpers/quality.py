@@ -27,15 +27,6 @@ def analyze_and_plot_brightness_sharpness_raw(
     if not img_paths:
         return {}
 
-    cache_file = out_dir / "image_quality_cache.json"
-    cache: dict[str, dict[str, Any]] = {}
-    if cache_file.exists():
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-        except Exception:
-            cache = {}
-
     rng = random.Random(42)
     sample_paths = list(img_paths)
     if len(sample_paths) > max_samples:
@@ -43,30 +34,12 @@ def analyze_and_plot_brightness_sharpness_raw(
 
     brights, sharps = [], []
     for p in sample_paths:
-        st = p.stem
-        if st in cache and "brightness" in cache[st] and "sharpness" in cache[st]:
-            b = cache[st]["brightness"]
-            s_val = cache[st]["sharpness"]
-        else:
-            res = calculate_brightness_sharpness(p)
-            if res is None:
-                continue
-            b, s_val = res
-            cache[st] = {
-                "brightness": round(b, 2),
-                "sharpness": round(s_val, 2),
-                "dark": b < 85,
-                "bright": b > 185,
-                "blur": s_val < blur_threshold,
-            }
+        res = calculate_brightness_sharpness(p)
+        if res is None:
+            continue
+        b, s_val = res
         brights.append(b)
         sharps.append(s_val)
-
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
 
     if not brights:
         return {}
@@ -160,15 +133,6 @@ def analyze_and_plot_brightness_sharpness_processed(
     if not img_paths:
         return {}
 
-    cache_file = out_dir / "image_quality_cache.json"
-    cache: dict[str, dict[str, Any]] = {}
-    if cache_file.exists():
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-        except Exception:
-            cache = {}
-
     stem_to_p = {p.stem: p for p in img_paths}
     rng = random.Random(42)
 
@@ -182,35 +146,18 @@ def analyze_and_plot_brightness_sharpness_processed(
         chosen_stems = rng.sample(stems_s, min(len(stems_s), samples_per_split))
         b_list, s_list = [], []
         for st in chosen_stems:
-            if st in cache and "brightness" in cache[st] and "sharpness" in cache[st]:
-                b = cache[st]["brightness"]
-                s_val = cache[st]["sharpness"]
-            else:
-                p = stem_to_p.get(st)
-                if not p or not p.exists():
-                    continue
-                res = calculate_brightness_sharpness(p)
-                if res is None:
-                    continue
-                b, s_val = res
-                cache[st] = {
-                    "brightness": round(b, 2),
-                    "sharpness": round(s_val, 2),
-                    "dark": b < 85,
-                    "bright": b > 185,
-                    "blur": s_val < blur_threshold,
-                }
+            p = stem_to_p.get(st)
+            if not p or not p.exists():
+                continue
+            res = calculate_brightness_sharpness(p)
+            if res is None:
+                continue
+            b, s_val = res
             b_list.append(b)
             s_list.append(s_val)
             all_brights.append(b)
             all_sharps.append(s_val)
         split_metrics[s] = {"brightness": b_list, "sharpness": s_list}
-
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
 
     if not all_brights:
         return {}

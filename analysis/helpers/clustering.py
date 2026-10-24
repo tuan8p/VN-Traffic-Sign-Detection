@@ -204,12 +204,3 @@ def plot_dhash_clusters(
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {out_path}")
-
-    # Ghi file JSON danh sách cụm vào cùng thư mục
-    json_path = out_path.parent / "dhash_clusters.json"
-    try:
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(cluster_res, f, indent=2, ensure_ascii=False)
-        print(f"  Saved: {json_path}")
-    except Exception as e:
-        print(f"  [Warn] Không thể lưu dhash_clusters.json: {e}")
