@@ -1,38 +1,4 @@
-"""Shared offline preprocessing for detection.
-
-# Windows UTF-8 fix
-import sys, io
-if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf-8-sig"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
-Tạo bộ dữ liệu chuẩn hoá cho cả 2 pipeline tại:
-    data/processed/
-      images/{train,val,test}/
-      labels/{train,val,test}/
-      data.yaml
-      meta.json
-      {train,val,test}_files.txt
-
-Quy trình chuẩn hóa trực tiếp từ dữ liệu ảnh (Dynamic Image Clustering & Split):
-  1. Chỉ dựa vào toàn bộ ảnh thô trong images/: Tuyệt đối không đọc hay dựa vào bất kỳ file split có sẵn nào trong split_dataset/.
-  2. BƯỚC 1: Phân cụm (Clustering):
-     - Tính Difference Hash 1024-bit (size=32, Hamming <= 370) cho toàn bộ ảnh thô.
-     - Gom toàn bộ ảnh thành các cụm tương đồng bối cảnh/chuỗi thời gian bằng thuật toán Disjoint Set Union (DSU).
-  3. BƯỚC 2: Phân chia tập (Dataset Splitting theo tỉ lệ 70% Train / 15% Val / 15% Test):
-     - Dựa vào kết quả phân cụm ở Bước 1: gán NGUYÊN VẸN từng cụm vào một tập duy nhất.
-     - ĐẢM BẢO TUYỆT ĐỐI: Không được lấy các ảnh của cùng 1 cụm mà nằm trong 2 tập khác nhau (100% Cluster Isolation).
-     - Đảm bảo tập Train có đủ toàn bộ 52/52 lớp nhãn (ưu tiên cụm chứa lớp độc nhất vào Train).
-     - Phân bổ đều ảnh tối (brightness < 85) và ảnh mờ (sharpness < 100) để cân bằng quang học giữa các tập.
-  4. BƯỚC 3: Chuẩn hoá kích thước (Letterbox Resize 640×640):
-     - Giữ nguyên tỉ lệ khung hình (aspect ratio), bù padding xám 114.
-     - Chuyển đổi toạ độ YOLO box và loại bỏ triệt để các box siêu nhỏ (< min_box_px, mặc định 8px).
-  5. BƯỚC 4: Cân bằng nhãn thiểu số cho tập Train (Data Augmentation):
-     - Tăng cường dữ liệu cho các nhãn dưới 50 box trong tập Train.
-     - Kiểm tra đối soát dHash không gây rò rỉ sang tập Val và Test.
-  6. BƯỚC 5: Xuất metadata và kiểm tra rò rỉ dữ liệu (Data Leakage Verification):
-     - Ghi nhận báo cáo vào data/processed/meta.json, data.yaml, và lưu danh sách file split tại data/processed/.
-"""
+"""Tiền xử lý offline 5 bước chuẩn hoá dataset cho Faster R-CNN và YOLO26m."""
 from __future__ import annotations
 
 import csv

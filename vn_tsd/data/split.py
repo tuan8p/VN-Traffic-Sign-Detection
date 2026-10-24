@@ -1,14 +1,4 @@
-"""Module phân chia tập dữ liệu (Dataset Splitting) dựa trên cụm dHash.
-
-Quy trình chuẩn:
-  1. Gom cụm toàn bộ ảnh đầu vào bằng dHash 1024-bit (size=32, Hamming <= 370).
-  2. Bóc tách viền xám (114) để bảo đảm việc gom cụm hoàn toàn dựa trên bối cảnh thực.
-  3. Phân chia các cụm vào 3 tập (Train, Val, Test) theo tỉ lệ (mặc định 70/15/15).
-  4. ĐẢM BẢO TUYỆT ĐỐI:
-     - Toàn bộ các ảnh thuộc cùng 1 cụm phải nằm trong cùng 1 tập (không được chia rẽ cụm).
-     - Đầy đủ 52/52 lớp trong tập Train.
-     - Cân bằng quang học: phân bổ đều ảnh tối và ảnh mờ vào các tập, tránh lệch dữ liệu.
-"""
+"""Phân chia dataset theo cụm dHash, bảo toàn 52 lớp cho tập train."""
 from __future__ import annotations
 
 import random
@@ -30,7 +20,7 @@ def _read_labels_for_stems(
     min_box_px: int = 8,
     image_size: tuple[int, int] = (640, 640),
 ) -> dict[str, list[int]]:
-    """Đọc danh sách class_id cho từng file nhãn sau khi đã loại bỏ triệt để các box tiny (< min_box_px)."""
+    """Đọc class_id cho từng file nhãn, bỏ qua box < min_box_px."""
     stem_to_classes: dict[str, list[int]] = defaultdict(list)
     tw, th = image_size
 
@@ -60,7 +50,6 @@ def _read_labels_for_stems(
                         bw, bh = float(parts[3]), float(parts[4])
                         px_w = bw * orig_w * scale
                         px_h = bh * orig_h * scale
-                        # Loại bỏ tiny box trước khi gom cụm & phân bổ lớp
                         if px_w >= min_box_px and px_h >= min_box_px:
                             stem_to_classes[s].append(cid)
         except Exception:
@@ -75,14 +64,12 @@ def split_clusters_for_classes(
     ratio: tuple[float, float, float] = (0.70, 0.15, 0.15),
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Phân bổ các cụm vào Train, Val, Test đảm bảo tập Train luôn có đủ 52/52 lớp
-    và 100% Cluster Isolation (không chia rẽ bất kỳ cụm nào).
-    """
+    """Phân bổ cụm vào Train/Val/Test (Train đủ 52 lớp, cô lập cụm 100%)."""
     total_images = len(img_paths)
     all_stems = [p.stem for p in img_paths]
     stem_to_path = {p.stem: p for p in img_paths}
 
-    # Đo kiểm quang học nhanh để cân bằng ảnh tối & mờ
+    # Đo độ sáng và độ nét để cân bằng
     stem_quality: dict[str, dict[str, bool]] = {}
     for s in all_stems:
         p = stem_to_path.get(s)
@@ -91,10 +78,7 @@ def split_clusters_for_classes(
         res = calculate_brightness_sharpness(p)
         if res is not None:
             b, s_val = res
-            stem_quality[s] = {
-                "dark": b < 85,
-                "blur": s_val < 100,
-            }
+            stem_quality[s] = {"dark": b < 85, "blur": s_val < 100}
         else:
             stem_quality[s] = {"dark": False, "blur": False}
 
@@ -120,7 +104,7 @@ def split_clusters_for_classes(
         "test": total_images - int(total_images * ratio[0]) - int(total_images * ratio[1]),
     }
 
-    # Tìm các cụm bắt buộc vào train (lớp chỉ xuất hiện ở 1 cụm duy nhất, hoặc cụm quá lớn)
+    # Cụm bắt buộc vào train: chứa lớp hiếm hoặc kích thước lớn
     class_to_clusters: dict[int, set[str]] = defaultdict(set)
     for cname, cls_list in cluster_to_classes.items():
         for cid in cls_list:
@@ -137,12 +121,10 @@ def split_clusters_for_classes(
 
     print(f"[split] Cụm bắt buộc vào Train (bảo toàn 52 lớp): {len(mandatory_train)} cụm ({sum(len(clusters[c]) for c in mandatory_train):,} ảnh).")
 
-    # Thuật toán tìm kiếm nghiệm tối ưu cân bằng tỉ lệ, lớp và quang học
     best_score = float("inf")
     best_splits: dict[str, list[str]] | None = None
     best_info: Any = None
 
-    # Tiền tính toán trước để tối ưu tốc độ x100 lần
     mandatory_stems: list[str] = []
     mandatory_sz = 0
     mandatory_classes: set[int] = set()
@@ -162,9 +144,8 @@ def split_clusters_for_classes(
     cluster_dk = {c: cluster_quality[c]["dark"] for c in remaining_clusters}
     cluster_bl = {c: cluster_quality[c]["blur"] for c in remaining_clusters}
 
-    rng_seed = seed
     for trial in range(300):
-        rng = random.Random(rng_seed + trial)
+        rng = random.Random(seed + trial)
         splits: dict[str, list[str]] = {"train": list(mandatory_stems), "val": [], "test": []}
         split_sizes = {"train": mandatory_sz, "val": 0, "test": 0}
         split_classes: dict[str, set[int]] = {"train": set(mandatory_classes), "val": set(), "test": set()}
@@ -237,7 +218,7 @@ def split_by_dhash_clusters(
     image_size: tuple[int, int] = (640, 640),
     seed: int = 42,
 ) -> dict[str, list[str]]:
-    """Phân chia split tự động dựa trên gom cụm dHash + pHash từ ảnh."""
+    """Gom cụm dHash + pHash và phân chia split."""
     if not img_paths:
         return {"train": [], "val": [], "test": []}
 
