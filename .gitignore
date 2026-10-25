@@ -226,8 +226,6 @@ data/processed/**
 !data/processed/.gitkeep
 outputs/**
 !outputs/.gitkeep
-analysis/figures/**
-!analysis/figures/.gitkeep
 wandb/
 runs/
 *.pt
