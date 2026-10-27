@@ -223,7 +223,27 @@ else:
     train_cmd = [sys.executable, "-m", "tools.run_train", *cmd]
 
 print(">> ", " ".join(train_cmd))
-subprocess.run(train_cmd, check=True)
+print("run_dir (before train):", RUN_DIR)
+proc = subprocess.run(train_cmd, check=False)
+if proc.returncode != 0:
+    import json
+
+    print("\n=== torchrun failed (exit", proc.returncode, ") ===")
+    print("Scroll up in this cell for rank-0 traceback (CUDA OOM, W&B, ValueError, …).")
+    failure = RUN_DIR / "failure.json"
+    if failure.is_file():
+        print("\n--- failure.json ---")
+        print(failure.read_text(encoding="utf-8"))
+    metrics = RUN_DIR / "metrics.json"
+    if metrics.is_file():
+        try:
+            doc = json.loads(metrics.read_text(encoding="utf-8"))
+            if doc.get("status") == "failed":
+                print("\n--- metrics.json (failed) ---")
+                print(json.dumps(doc, indent=2))
+        except json.JSONDecodeError:
+            pass
+    raise SystemExit(proc.returncode)
 
 print("run_dir:", RUN_DIR)
 print("wandb:", RUN_DIR / "wandb_run.json")

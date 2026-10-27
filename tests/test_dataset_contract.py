@@ -22,10 +22,17 @@ def test_rejects_external_split_path(tmp_path):
         validate_processed_dataset({"data": {"root": str(root)}})
 
 
-def test_rejects_path_outside_root(tmp_path):
+def test_accepts_stale_build_path_when_splits_under_root(tmp_path):
+    root = make_cache(tmp_path / "cache")
+    data = yaml.safe_load((root / "data.yaml").read_text(encoding="utf-8"))
+    data["path"] = "E:/BACHKHOA/28_COMPUTER_VISION/BTL/BTL3/VN-Traffic-Sign-Detection/data/processed"
+    (root / "data.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert validate_processed_dataset({"data": {"root": str(root)}}) == root.resolve()
+
+
+def test_accepts_mismatching_absolute_path_when_splits_under_root(tmp_path):
     root = make_cache(tmp_path / "cache")
     data = yaml.safe_load((root / "data.yaml").read_text(encoding="utf-8"))
     data["path"] = str(tmp_path / "other")
     (root / "data.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
-    with pytest.raises(ValueError, match="data.root"):
-        validate_processed_dataset({"data": {"root": str(root)}})
+    assert validate_processed_dataset({"data": {"root": str(root)}}) == root.resolve()
