@@ -123,7 +123,7 @@ class YOLOPipeline(BasePipeline):
 
         from .distributed import Context
         from .tracking import Tracking, remove_native_wandb
-        ctx = Context()
+        ctx = Context(self.cfg.get("runtime_cfg", {}))
         tracking = Tracking(self.cfg, self.run_dir, ctx.main)
         success = False
         try:

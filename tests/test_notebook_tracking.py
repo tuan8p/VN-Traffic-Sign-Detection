@@ -81,10 +81,35 @@ def test_group_is_kept_alive_until_context_close(monkeypatch):
     dist.init_process_group.side_effect = lambda *args, **kwargs: state.update(initialized=True)
     dist.destroy_process_group.side_effect = lambda: state.update(initialized=False)
     monkeypatch.setattr(distributed, 'dist', dist)
-    ctx = distributed.Context()
+    ctx = distributed.Context({"ddp_timeout_seconds": 1200})
+    from datetime import timedelta
+    assert dist.init_process_group.call_args.kwargs["timeout"] == timedelta(seconds=1200)
     assert state['initialized']
     # No handoff/destroy occurs before training.
     dist.destroy_process_group.assert_not_called()
     ctx.close()
     assert not state['initialized']
     assert dist.destroy_process_group.call_count == 1
+
+
+def test_dataset_preparation_creates_writable_copy(tmp_path, monkeypatch):
+    from vn_tsd.utils.io import save_yaml, load_yaml
+    source = tmp_path / 'input'
+    working = tmp_path / 'working'
+    working.mkdir()
+    for split in ('train', 'val', 'test'):
+        (source / 'images' / split).mkdir(parents=True)
+        (source / 'labels' / split).mkdir(parents=True)
+        (source / 'images' / split / 'sample.jpg').write_bytes(b'image')
+    save_yaml({'path': '/old/machine', 'names': ['sign']}, source / 'data.yaml')
+    notebook = json.loads((Path(__file__).resolve().parents[1] / 'notebooks/04_train_yolo26m.ipynb').read_text())
+    code = ''.join(notebook['cells'][12]['source']).replace("Path('/kaggle/working')", repr(working))
+    env = {'PROCESSED_ROOT': str(source), 'PosixPath': type(working)}
+    exec(compile(code, '<dataset-cell>', 'exec'), env)
+    target = Path(env['PROCESSED_ROOT'])
+    assert not (target / 'images').is_symlink()
+    assert (target / 'images/train/sample.jpg').read_bytes() == b'image'
+    (target / 'labels/train.cache').write_text('new cache')
+    assert not (source / 'labels/train.cache').exists()
+    assert load_yaml(target / 'data.yaml')['path'] == str(target)
+    assert load_yaml(source / 'data.yaml')['path'] == '/old/machine'
