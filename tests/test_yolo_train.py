@@ -27,6 +27,7 @@ def pipeline(tmp_path):
     run_dir = tmp_path / "run"
     (run_dir / "checkpoints").mkdir(parents=True)
 
+    cfg["train"]["require_wandb"] = False
     return YOLOPipeline(cfg, run_dir)
 
 
@@ -148,3 +149,46 @@ def test_fit_saves_test_metrics(pipeline, tmp_path):
     )
     assert saved["test_metrics"] == test_metrics
     assert (pipeline.run_dir / "resolved_config.yaml").is_file()
+
+def test_skip_test_when_disabled(pipeline, tmp_path):
+    pipeline.cfg['eval']['auto_eval_test'] = False
+    best = tmp_path / 'best.pt'
+    best.write_bytes(b'checkpoint')
+    model = Mock()
+    model.trainer.best = best
+    with patch('vn_tsd.pipelines.yolo.train.build_yolo26m', return_value=model), \
+         patch.object(pipeline, 'evaluate') as evaluate:
+        result = pipeline.fit()
+    evaluate.assert_not_called()
+    assert result['test_metrics'] is None
+
+
+def test_ddp_worker_only_trains(pipeline, monkeypatch):
+    from vn_tsd.pipelines.yolo import distributed
+    monkeypatch.setenv('WORLD_SIZE', '2')
+    monkeypatch.setenv('RANK', '1')
+    pipeline.cfg['eval']['auto_eval_test'] = False
+    ctx = Mock(main=False, world=2)
+    ctx.phase.side_effect = lambda fn: fn()
+    monkeypatch.setattr(distributed, 'Context', lambda: ctx)
+    model = Mock()
+    with patch('vn_tsd.pipelines.yolo.train.build_yolo26m', return_value=model), \
+         patch.object(pipeline, 'evaluate') as evaluate, \
+         patch.object(pipeline, '_save_checkpoint') as save:
+        result = pipeline.fit()
+    model.train.assert_called_once()
+    assert model.train.call_args.kwargs['batch'] == 8
+    assert model.train.call_args.kwargs['device'] == [0, 1]
+    evaluate.assert_not_called()
+    save.assert_not_called()
+    assert not (pipeline.run_dir / 'metrics.json').exists()
+    assert result['status'] == 'worker_finished'
+    ctx.handoff.assert_called_once()
+    ctx.close.assert_called_once()
+
+
+def test_ddp_rejects_uneven_global_batch(pipeline, monkeypatch):
+    monkeypatch.setenv('WORLD_SIZE', '2')
+    pipeline.cfg['train']['batch_size'] = 7
+    with pytest.raises(ValueError, match='divisible'):
+        pipeline._build_train_args()
