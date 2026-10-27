@@ -149,3 +149,32 @@ outputs/<pipeline>/<run_id>/
 ## License
 
 MIT
+
+### YOLO: notebook → torchrun (Kaggle 2 GPUs)
+
+Notebook 04 prepares the processed dataset, reads `WANDB_API_KEY` from Kaggle
+Secrets, creates one shared run name/directory, then launches `tools.run_train`
+with `torch.distributed.run --standalone --nproc_per_node=2`. It does not create
+a W&B run itself. Push the Python changes before running the updated notebook.
+
+YOLO passes the global train batch unchanged to Ultralytics (8 means 4 per GPU
+for two workers). Workers receive device=[0,1]; Ultralytics owns model DDP and
+samplers. A short preflight process group coordinates setup errors, then is
+closed before Ultralytics initializes its own group. Torchrun supervises worker
+failures during training. Only rank 0 starts W&B and writes history/checkpoints.
+DDP launch requires explicit shared --run-dir and --run-name. Existing resolved
+runs are rejected; this implementation does not add training resume.
+
+Set EPOCHS=1 for the first two-GPU smoke test. The notebook forces
+`eval.auto_eval_test=false` for DDP. With `EVALUATE_TEST=True`, it launches
+`tools.run_eval` once, in a separate process after both workers exit successfully.
+Evaluation uses one GPU and the configured total eval batch (not distributed
+like Faster R-CNN), so check memory separately. Test metrics are saved in
+`test_metrics.json`; they are not added to the already-finished W&B run.
+Finally, notebook creates run.zip. Keep test disabled while tuning.
+
+W&B loss/validation AP/LR charts are in the rank-zero run URL stored in
+wandb_run.json. AR100 remains unavailable. Native Ultralytics fitness and COCO
+comparability still need validation before the final benchmark. Local mocked
+checks do not establish that CUDA/NCCL or server authentication works: validate
+one epoch on Kaggle and verify one run, two GPU workers and one best checkpoint.
