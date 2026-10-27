@@ -8,14 +8,10 @@ from typing import Any
 def build_yolo26m(cfg: dict[str, Any]):
     """Build YOLO26m model."""
     from ultralytics import YOLO
-    model_cfg = cfg.get("model", {})
-    weights = model_cfg.get("weights", "yolo26m.pt")
 
-    if not isinstance(weights, str) or not weights.strip():
-        raise ValueError(
-            "model.weights must be a non-empty string"
-        )
+    from .weights import resolve_yolo_weights
 
+    weights = resolve_yolo_weights(cfg)
     model = YOLO(weights, task="detect")
 
     if model.task != "detect":

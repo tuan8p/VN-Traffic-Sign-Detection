@@ -6,7 +6,7 @@ Không merge hoặc chỉnh code thành viên khác trong đợt audit này.
 ## Snapshot đã đọc
 
 | Nhánh | Commit |
-|---|---|
+| --- | --- |
 | main | `35c37b13489d1bcd0ee3f163dd1f2b1696a5aa70` |
 | faster-rcnn local | `5ad07185a474449570b5ae681101f50e27bfafba` |
 | yolo | `c1eceb154968156116418a9946e8d6e6b2de40af` |
@@ -19,7 +19,7 @@ Không merge hoặc chỉnh code thành viên khác trong đợt audit này.
 Ba lỗi dưới đã được tái hiện bằng fixture tổng hợp của đúng snapshot preprocessing; chưa có cache thật để audit toàn bộ dữ liệu.
 
 | Mức | Vấn đề và source | Việc cần bàn giao |
-|---|---|---|
+| --- | --- | --- |
 | P1 | [Thiếu test thì gán test = val](https://github.com/tuan8p/VN-Traffic-Sign-Detection/blob/aa0577330ae7676b93386aeb41125587495b33a7/vn_tsd/data/preprocess_offline.py#L538-L540) | Ba split tách biệt hoặc báo thiếu test; không dùng validation làm test. |
 | P1 | [Cleanup chỉ xử lý train–test](https://github.com/tuan8p/VN-Traffic-Sign-Detection/blob/aa0577330ae7676b93386aeb41125587495b33a7/vn_tsd/data/preprocess_offline.py#L247-L287); fixture val–test trùng vẫn qua và có thông báo đã xử lý leakage | Kiểm cả train–val, train–test, val–test và lineage augmentation; mô tả giới hạn kiểm tra, không tuyên bố độc lập tuyệt đối từ dHash. |
 | P1 | [Tạo output dir nhưng không làm sạch cache cũ](https://github.com/tuan8p/VN-Traffic-Sign-Detection/blob/aa0577330ae7676b93386aeb41125587495b33a7/vn_tsd/data/preprocess_offline.py#L120-L123) | Build cache mới hoặc policy xóa có kiểm soát. Fixture chạy train={a,b} rồi {a}: metadata ghi 1 nhưng disk còn 2 ảnh. |
@@ -37,11 +37,11 @@ Cần xác nhận thêm:
 ## Tuấn — hạ tầng chung, đóng gói và báo cáo
 
 | Vấn đề | Cách FRCNN xử lý trong ownership | Phần chung còn lại |
-|---|---|---|
+| --- | --- | --- |
 | [Train CLI](../tools/run_train.py) tạo UUID/timestamp/run directory ở từng process trước `fit()` | Canonicalize tên/path từ rank 0 trong pipeline; notebook được giữ nguyên scaffold theo yêu cầu, chưa truyền shared `--run-dir` | Torchrun từ scaffold vẫn có thể tạo candidate directories rỗng, và CLI in biến path cũ ở mỗi rank. Nên sửa tập trung khi nhóm giao; FRCNN không tự xóa dirs. |
 | Batch chung 8/16 chưa được profile 2×T4 | Chia đúng theo world size, không âm thầm đổi batch hoặc gradient accumulation | Hai team chạy preflight rồi cùng quyết định nếu OOM. CUDA/NMS laptop không xác nhận batch này vừa VRAM. |
 | W&B host/entity/project lấy từ shared config | Một rank-0 run xuyên train + final test; không silent offline khi required | Xác nhận quyền truy cập/Secrets và host đang dùng trước Kaggle; không gửi API key vào repo. |
-| [CI](../.github/workflows/ci.yml) chỉ cài `.[dev]` | Lazy import ML dependencies; tests nặng skip rõ khi thiếu thư viện, thay assertion scaffold riêng FRCNN | Nếu nhóm muốn CI kiểm model thật, thêm job/dependency riêng do owner hạ tầng xử lý. CI tối thiểu xanh không chứng minh model chạy. |
+| Tests local / pytest | Lazy import ML dependencies; tests nặng skip rõ khi thiếu thư viện, thay assertion scaffold riêng FRCNN | Không có GitHub Actions trong repo; chạy pytest trên máy dev hoặc Kaggle smoke. |
 | Eval từ máy khác | Nhánh FRCNN dự kiến nhận `--data-root`/`--device` tường minh; chỉ đổi vị trí/runtime, kiểm dataset identity; không resolve lại config train | Hai option được giới hạn nhánh FRCNN; YOLO giữ hành vi cũ. Nhóm có thể thống nhất hỗ trợ chung sau. |
 | Demo cần dùng checkpoint | Loader FRCNN dựng offline, không download; metadata ghi kiến trúc, class map, RGB và processed-coordinate space | Tuấn xử lý ảnh/video gốc, letterbox và inverse coordinate mapping, geometry/UI; không coi tensor prediction là tọa độ ảnh gốc nếu chưa inverse. |
 

@@ -1,9 +1,14 @@
-
-from unittest.mock import patch
-
-import pytest
+import sys
+from types import ModuleType
+from unittest.mock import Mock, patch
 
 from vn_tsd.pipelines.yolo.model import build_yolo26m
+
+
+def _fake_ultralytics():
+    mod = ModuleType("ultralytics")
+    mod.YOLO = Mock()
+    return mod
 
 
 def test_load_model_from_config():
@@ -13,27 +18,18 @@ def test_load_model_from_config():
         }
     }
 
-    with patch(
-        "vn_tsd.pipelines.yolo.model.YOLO"
-    ) as mock_yolo:
-        mock_yolo.return_value.task = "detect"
-
+    fake = _fake_ultralytics()
+    fake.YOLO.return_value.task = "detect"
+    with (
+        patch.dict(sys.modules, {"ultralytics": fake}),
+        patch(
+            "vn_tsd.pipelines.yolo.weights.resolve_yolo_weights",
+            return_value="yolo26m.pt",
+        ),
+    ):
         model = build_yolo26m(cfg)
 
-        mock_yolo.assert_called_once_with(
-            "yolo26m.pt",
-            task="detect"
-        )
-
+        fake.YOLO.assert_called_once_with("yolo26m.pt", task="detect")
         assert model.task == "detect"
 
 
-def test_invalid_weights():
-    cfg = {
-        "model": {
-            "weights": ""
-        }
-    }
-
-    with pytest.raises(ValueError):
-        build_yolo26m(cfg)

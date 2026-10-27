@@ -1,5 +1,9 @@
 runtime: kaggle
 device: cuda
+# Kaggle Models → Ultralytics YOLO26 (attach once per notebook; no download).
+yolo_pretrained: /kaggle/input/models/ultralytics/yolo26/pytorch/default/1/yolo26m.pt
+# Default processed cache when using Add Data → zero001206/... on Kaggle.
+data_root_default: /kaggle/input/datasets/zero001206/vn-traffic-sign-detection-preprocessed-data/processed
 num_workers: 2
 pin_memory: true
 gpus: 2

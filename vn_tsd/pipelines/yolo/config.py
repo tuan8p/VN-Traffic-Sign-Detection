@@ -19,7 +19,7 @@ TRAIN_DEFAULTS = dict(
     momentum=0.937,
     weight_decay=0.0005,
     lrf=0.01,
-    warmup_epochs=3.0,
+    warmup_epochs=5.0,
     cos_lr=True,
     close_mosaic=10,
 )
