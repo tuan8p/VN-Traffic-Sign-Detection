@@ -17,7 +17,7 @@ def architecture(cfg):
     result = dict(family="faster_rcnn", backbone="resnet50_fpn", num_classes=53,
         weights=m["weights"], trainable_backbone_layers=5, norm="FrozenBatchNorm2d", frozen_bn_eps=0.0,
         min_size=640, max_size=640, size_divisible=32, mean=MEAN, std=STD,
-        score_thresh=m["score_thresh"], nms_thresh=m["nms_thresh"], detections_per_img=100,
+        score_thresh=m["score_thresh"], nms_thresh=m["nms_thresh"], detections_per_img=m["detections_per_img"],
         input="RGB float32 CHW [0,1]", coordinates="processed image pixels xyxy")
     # Legacy checkpoints without a head field retain their exact metadata/hash.
     if "head" in m:
@@ -37,7 +37,8 @@ def build_faster_rcnn(cfg, *, initialize=None):
                                    norm_layer=FrozenBatchNorm2d, trainable_layers=5)
     model = FasterRCNN(backbone, num_classes=91 if initialize else 53,
         min_size=a["min_size"], max_size=a["max_size"], image_mean=a["mean"], image_std=a["std"],
-        box_score_thresh=a["score_thresh"], box_nms_thresh=a["nms_thresh"], box_detections_per_img=100)
+        box_score_thresh=a["score_thresh"], box_nms_thresh=a["nms_thresh"],
+        box_detections_per_img=a["detections_per_img"])
     if initialize:
         state = FasterRCNN_ResNet50_FPN_Weights.COCO_V1.get_state_dict(progress=True, check_hash=True)
         model.load_state_dict(state, strict=True)

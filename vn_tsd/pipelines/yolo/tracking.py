@@ -1,7 +1,13 @@
-"""Rank-zero tracking. No notebook objects are passed to DDP workers."""
+"""Rank-zero training log aligned with vn_tsd.runtime.train_log."""
+from __future__ import annotations
+
+import math
+import shutil
 from pathlib import Path
 
-from vn_tsd.eval.metrics import summarize_yolo
+from vn_tsd.eval.metrics import PRIMARY_METRIC
+from vn_tsd.pipelines.yolo.coco_eval import evaluate_split_coco
+from vn_tsd.runtime.train_log import history_row, log_early_stop, log_epoch, wandb_epoch_payload
 from vn_tsd.utils.io import save_json
 
 
@@ -15,8 +21,15 @@ class Tracking:
     def __init__(self, cfg, run_dir, main):
         self.cfg, self.run_dir, self.main = cfg, Path(run_dir), main
         self.run = None
-        self.pending = set()
-        self.history = []
+        self.pending: set[int] = set()
+        self.history: list[dict] = []
+        self._best_score = -math.inf
+        self._bad_epochs = 0
+        self.best_epoch: int | None = None
+        self.best_val: dict | None = None
+        self._patience = int(cfg.get("train", {}).get("early_stopping_patience", 0))
+        self._total_epochs = int(cfg.get("train", {}).get("epochs", 1))
+        self._stopped_early = False
 
     def start(self):
         if not self.main or not self.cfg['train'].get('require_wandb', False):
@@ -35,7 +48,7 @@ class Tracking:
             settings=wandb.Settings(base_url=project['wandb_base_url']),
         )
         self.run.define_metric('epoch')
-        for prefix in ('train/*', 'val/*', 'lr/*'):
+        for prefix in ('train_loss', 'val_loss', 'lr', 'val/*', 'is_best', 'patience_count'):
             self.run.define_metric(prefix, step_metric='epoch')
         save_json({'id': self.run.id, 'url': self.run.url}, self.run_dir / 'wandb_run.json')
         print('W&B training charts:', self.run.url, flush=True)
@@ -49,18 +62,79 @@ class Tracking:
         if not self.main or epoch not in self.pending:
             return
         self.pending.remove(epoch)
-        scores = summarize_yolo(trainer.validator.metrics)
-        values = {'epoch': epoch}
-        values.update({k: float(v) for k, v in trainer.label_loss_items(trainer.tloss, prefix='train').items()})
-        values.update({k: float(v) for k, v in trainer.metrics.items()})
-        values.update({f'val/{k}': v for k, v in scores.items() if v is not None})
-        values.update({f'lr/{k}': float(v) for k, v in trainer.lr.items()})
-        self.history.append({**values, 'val/AR100': scores['AR100']})
+        val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val")["metrics"]
+        train_loss = _train_loss(trainer)
+        val_loss = _val_loss(trainer)
+        lr = _learning_rate(trainer)
+        score = val_metrics.get(PRIMARY_METRIC)
+        if score is None or not math.isfinite(score):
+            raise ValueError("Validation mAP50-95 is undefined; cannot select best checkpoint")
+        improved = score > self._best_score
+        if improved:
+            self._best_score = float(score)
+            self._bad_epochs = 0
+            self.best_epoch = epoch
+            self.best_val = dict(val_metrics)
+            _save_best_from_trainer(trainer, self.run_dir)
+        else:
+            self._bad_epochs += 1
+        row = history_row(
+            epoch, train_loss, val_loss, val_metrics, lr,
+            is_best=improved, patience_count=self._bad_epochs,
+        )
+        self.history.append(row)
         save_json(self.history, self.run_dir / 'history.json')
+        log_epoch(
+            epoch, self._total_epochs, train_loss, val_loss, val_metrics, lr,
+            is_best=improved,
+        )
         if self.run is not None:
-            self.run.log(values)
+            payload = wandb_epoch_payload(row)
+            payload["epoch"] = epoch
+            self.run.log(payload, step=epoch)
+        if self._patience > 0 and self._bad_epochs >= self._patience:
+            trainer.stop = True
+            self._stopped_early = True
+            log_early_stop(epoch, self._patience)
+
+    def on_train_end(self, trainer):
+        if not self.main or not self._stopped_early:
+            return
+        if trainer.epoch + 1 >= self._total_epochs:
+            self._stopped_early = False
 
     def finish(self, success):
         if self.run is not None:
             self.run.finish(exit_code=0 if success else 1)
             self.run = None
+
+
+def _save_best_from_trainer(trainer, run_dir: Path) -> None:
+    last = Path(trainer.last)
+    if not last.is_file():
+        raise FileNotFoundError(f"Expected trainer checkpoint after epoch save: {last}")
+    dest = run_dir / "checkpoints" / "checkpoint_best.pt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if last.resolve() != dest.resolve():
+        shutil.copy2(last, dest)
+
+
+def _train_loss(trainer) -> float:
+    items = trainer.label_loss_items(trainer.tloss, prefix='train')
+    return float(sum(items.values()))
+
+
+def _val_loss(trainer) -> float:
+    metrics = trainer.metrics
+    if 'val/box_loss' in metrics:
+        return float(metrics['val/box_loss'])
+    val_items = {k: float(v) for k, v in metrics.items() if str(k).startswith('val/') and 'loss' in str(k)}
+    if val_items:
+        return float(sum(val_items.values()))
+    raise ValueError('Ultralytics trainer did not expose validation box loss')
+
+
+def _learning_rate(trainer) -> float:
+    if not trainer.lr:
+        raise ValueError('Ultralytics trainer did not expose learning rate')
+    return float(next(iter(trainer.lr.values())))

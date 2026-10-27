@@ -48,7 +48,7 @@ class FasterRCNNPipeline(BasePipeline):
         from vn_tsd.runtime.batch import per_rank_batch
         from vn_tsd.runtime.pack import zip_run_dir
         from vn_tsd.runtime.run_dir import with_run_hash
-        from vn_tsd.runtime.train_log import history_row, log_epoch, log_early_stop
+        from vn_tsd.runtime.train_log import history_row, log_epoch, log_early_stop, wandb_epoch_payload
         from vn_tsd.utils.seed import set_seed
         from .artifacts import write_json, provenance, curves, example_ids, overlays
         from .config import validate_config
@@ -172,10 +172,10 @@ class FasterRCNNPipeline(BasePipeline):
             best.best, best.bad, best.epoch = state
             if improved:
                 best_metrics = val_metrics
-            row = history_row(epoch, training["loss"], sum(val_components.values()), val_metrics, training["lr"])
-            row.update(train_components=training["components"], val_components=val_components,
-                best=improved, patience_count=best.bad, seconds=time.monotonic()-start,
-                successful_updates=training["successful_updates"], amp_skipped_updates=training["amp_skipped_updates"])
+            row = history_row(
+                epoch, training["loss"], sum(val_components.values()), val_metrics, training["lr"],
+                is_best=improved, patience_count=best.bad,
+            )
             history.append(row)
             def end_epoch():
                 if improved:
@@ -189,9 +189,9 @@ class FasterRCNNPipeline(BasePipeline):
                           training["lr"], is_best=improved)
                 run = getattr(self, "_wandb_run", None)
                 if run is not None:
-                    run.log({**{k: v for k, v in row.items() if k not in {"train_components", "val_components"}},
-                             **{f"train/{k}": v for k, v in training["components"].items()},
-                             **{f"val/{k}": v for k, v in val_components.items()}}, step=epoch)
+                    payload = wandb_epoch_payload(row)
+                    payload["epoch"] = epoch
+                    run.log(payload, step=epoch)
                 if stop:
                     log_early_stop(epoch, best.patience)
             ctx.main_call(end_epoch)

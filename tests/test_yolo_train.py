@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from frcnn_fixtures import make_cache
 from vn_tsd.config.resolve import resolve_config
 from vn_tsd.pipelines.yolo.train import YOLOPipeline
 
@@ -13,10 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def pipeline(tmp_path):
-    data_root = tmp_path / "data"
-    data_root.mkdir()
-    # Chỉ kiểm tra arguments, không dùng dataset này để train.
-    (data_root / "data.yaml").write_text("# test\n", encoding="utf-8")
+    data_root = make_cache(tmp_path / "data", train=1, val=1, test=1)
 
     cfg = resolve_config(
         pipeline_yaml=ROOT / "configs/pipelines/yolo26m.yaml",
@@ -44,6 +42,7 @@ def test_online_off_disables_augmentation(pipeline):
         assert args[key] == 0.0
 
     assert args["batch"] == pipeline.cfg["train"]["batch_size"]
+    assert args["patience"] == 0
 
 
 def test_online_on_applies_flags(pipeline):
@@ -79,88 +78,75 @@ def test_missing_data_yaml(pipeline):
         pipeline._build_train_args()
 
 
-def test_save_best_checkpoint(pipeline, tmp_path):
-    source = tmp_path / "best.pt"
-    source.write_bytes(b"checkpoint")
-
-    model = SimpleNamespace(
-        trainer=SimpleNamespace(best=source)
-    )
-
-    saved = pipeline._save_checkpoint(model)
-
-    assert saved == (
-        pipeline.run_dir / "checkpoints" / "checkpoint_best.pt"
-    )
+def test_save_best_checkpoint(pipeline):
+    checkpoint = pipeline.run_dir / "checkpoints" / "checkpoint_best.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    saved = pipeline._save_checkpoint(SimpleNamespace())
+    assert saved == checkpoint
     assert saved.read_bytes() == b"checkpoint"
 
 
-def test_missing_best_checkpoint(pipeline, tmp_path):
-    model = SimpleNamespace(
-        trainer=SimpleNamespace(best=tmp_path / "missing.pt")
-    )
-
+def test_missing_best_checkpoint(pipeline):
     with pytest.raises(FileNotFoundError):
-        pipeline._save_checkpoint(model)
+        pipeline._save_checkpoint(SimpleNamespace())
 
 
 def test_fit_saves_test_metrics(pipeline, tmp_path):
-    source = tmp_path / "best.pt"
-    source.write_bytes(b"checkpoint")
-
     model = Mock()
-    model.trainer.best = source
-
     test_metrics = {
         "mAP50-95": 0.4,
         "mAP50": 0.7,
         "mAP75": 0.45,
+        "AR100": None,
     }
+    tracking = Mock()
+    tracking.best_epoch = 1
+    tracking.best_val = test_metrics
+    tracking.run = None
+    tracking.finish = Mock()
 
-    def evaluate_after_checkpoint():
-        checkpoint = (
-            pipeline.run_dir / "checkpoints" / "checkpoint_best.pt"
-        )
-        assert checkpoint.read_bytes() == b"checkpoint"
+    def evaluate_after_checkpoint(**kwargs):
+        checkpoint = pipeline.run_dir / "checkpoints" / "checkpoint_best.pt"
+        checkpoint.write_bytes(b"checkpoint")
         model.train.assert_called_once()
-        return test_metrics
+        payload = {"metrics": test_metrics, "predictions": [], "evaluator": {}}
+        return payload if kwargs.get("detailed") else test_metrics
 
     with (
-        patch(
-            "vn_tsd.pipelines.yolo.train.build_yolo26m",
-            return_value=model,
-        ),
-        patch.object(
-            pipeline,
-            "evaluate",
-            side_effect=evaluate_after_checkpoint,
-        ) as evaluate,
+        patch("vn_tsd.pipelines.yolo.model.build_yolo26m", return_value=model),
+        patch("vn_tsd.pipelines.yolo.tracking.Tracking", return_value=tracking),
+        patch.object(pipeline, "evaluate", side_effect=evaluate_after_checkpoint) as evaluate,
     ):
         metrics = pipeline.fit()
 
     evaluate.assert_called_once_with()
-    assert metrics["status"] == "trained"
-    assert metrics["test_metrics"] == test_metrics
+    assert metrics["status"] == "completed"
+    assert metrics["test"] == test_metrics
 
     saved = json.loads(
         (pipeline.run_dir / "metrics.json").read_text(
             encoding="utf-8"
         )
     )
-    assert saved["test_metrics"] == test_metrics
+    assert saved["test"] == test_metrics
+    assert (pipeline.run_dir / "test_metrics.json").is_file()
     assert (pipeline.run_dir / "resolved_config.yaml").is_file()
 
 def test_skip_test_when_disabled(pipeline, tmp_path):
     pipeline.cfg['eval']['auto_eval_test'] = False
-    best = tmp_path / 'best.pt'
-    best.write_bytes(b'checkpoint')
     model = Mock()
-    model.trainer.best = best
-    with patch('vn_tsd.pipelines.yolo.train.build_yolo26m', return_value=model), \
+    tracking = Mock()
+    tracking.best_epoch = 1
+    tracking.best_val = {"mAP50-95": 0.1, "mAP50": 0.2, "mAP75": 0.1, "AR100": None}
+    tracking.run = None
+    tracking.finish = Mock()
+    (pipeline.run_dir / "checkpoints" / "checkpoint_best.pt").write_bytes(b"checkpoint")
+    with patch('vn_tsd.pipelines.yolo.model.build_yolo26m', return_value=model), \
+         patch('vn_tsd.pipelines.yolo.tracking.Tracking', return_value=tracking), \
          patch.object(pipeline, 'evaluate') as evaluate:
         result = pipeline.fit()
     evaluate.assert_not_called()
-    assert result['test_metrics'] is None
+    assert result['test'] is None
 
 
 def test_ddp_worker_only_trains(pipeline, monkeypatch):
@@ -172,7 +158,7 @@ def test_ddp_worker_only_trains(pipeline, monkeypatch):
     ctx.phase.side_effect = lambda fn: fn()
     monkeypatch.setattr(distributed, 'Context', lambda runtime: ctx)
     model = Mock()
-    with patch('vn_tsd.pipelines.yolo.train.build_yolo26m', return_value=model), \
+    with patch('vn_tsd.pipelines.yolo.model.build_yolo26m', return_value=model), \
          patch.object(pipeline, 'evaluate') as evaluate, \
          patch.object(pipeline, '_save_checkpoint') as save:
         result = pipeline.fit()

@@ -5,17 +5,9 @@ TODO [Team pipeline YOLO26m + preprocessing online]: ultralytics.YOLO('yolo26m.p
 from __future__ import annotations
 from typing import Any
 
-from ultralytics import YOLO
-
 def build_yolo26m(cfg: dict[str, Any]):
-    """Build YOLO26m model.
-
-    Args:
-        cfg: Config dict.
-
-    Returns:
-        YOLO model.
-    """
+    """Build YOLO26m model."""
+    from ultralytics import YOLO
     model_cfg = cfg.get("model", {})
     weights = model_cfg.get("weights", "yolo26m.pt")
 

@@ -9,10 +9,20 @@ model:
   family: yolo
   weights: yolo26m.pt
   imgsz: 640
+  # Match Faster R-CNN COCOeval postprocess for comparable test metrics.
+  score_thresh: 0.001
+  nms_thresh: 0.5
+  detections_per_img: 12
 
 train:
-  epochs: 50
+  epochs: 100
   lr0: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  lrf: 0.01
+  warmup_epochs: 3.0
+  cos_lr: true
+  close_mosaic: 10
   primary_metric: mAP50-95
 
 online_preprocess:
@@ -24,3 +34,7 @@ online_preprocess:
   mosaic: true
   mixup: false
   jitter: 0.1
+  mosaic_prob: 1.0
+  mixup_prob: 0.1
+  mixup_alpha: 32.0
+  color_jitter_params: {brightness: 0.2, contrast: 0.2, saturation: 0.2, hue: 0.02}

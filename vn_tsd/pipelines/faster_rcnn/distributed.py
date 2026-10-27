@@ -29,8 +29,13 @@ class Context:
                 if dist.get_world_size() != self.world or dist.get_rank() != self.rank:
                     raise RuntimeError("Existing process group does not match launcher")
             else:
-                dist.init_process_group(backend="nccl" if requested == "cuda" else "gloo",
-                                        timeout=datetime.timedelta(minutes=5))
+                timeout_s = runtime.get("ddp_timeout_seconds", 300)
+                if not isinstance(timeout_s, int) or timeout_s <= 0:
+                    timeout_s = 300
+                dist.init_process_group(
+                    backend="nccl" if requested == "cuda" else "gloo",
+                    timeout=datetime.timedelta(seconds=timeout_s),
+                )
                 self.owns_group = True
 
     @property

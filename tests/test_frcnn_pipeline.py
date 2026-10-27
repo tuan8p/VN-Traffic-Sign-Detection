@@ -44,7 +44,7 @@ def test_fit_best_artifacts_wandb_once_and_offline_eval(tmp_path, monkeypatch):
         assert (run/name).is_file(), name
     meta = model_module.read_checkpoint(run/"checkpoints/checkpoint_best.pt")["metadata"]
     history = json.loads((run/"history.json").read_text())
-    assert meta["best_epoch"] == 1 and history[1]["best"] is False
+    assert meta["best_epoch"] == 1 and history[1]["is_best"] is False
     assert meta["supports_training_resume"] is False
     # fit loaded epoch-1 checkpoint, not the final epoch's parameters.
     assert len(history) == 2 and history[1]["train_loss"] < history[0]["train_loss"]

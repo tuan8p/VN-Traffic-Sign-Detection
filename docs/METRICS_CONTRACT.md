@@ -9,13 +9,21 @@
 - Validation chọn checkpoint, test chỉ đánh giá checkpoint đã chọn. Không tune bằng test.
 - Không thay đổi cấu hình .env hoặc YAML trong bước thống nhất schema này.
 
-## Trạng thái YOLO
+## Log train (history.json + stdout)
 
-`evaluate()` dùng `summarize_yolo()` để ánh xạ ba AP native từ Ultralytics.
-`AR100` hiện là null; không lấy `results.box.mr` thay AR100.
-`metrics.json` ghi `metric_source: ultralytics-native` cho kết quả sau train.
-Đây là thống nhất schema, chưa phải thống nhất evaluator. Chưa hiện thực COCO evaluator
-hoặc thay đổi cơ chế chọn checkpoint/early stopping của Ultralytics trong bước này.
+Mỗi epoch, rank 0 ghi một dòng qua `vn_tsd.runtime.train_log.log_epoch` và append
+`history_row(...)` vào `history.json`. Khóa bắt buộc: `epoch`, `train_loss`,
+`val_loss`, `lr`, `is_best`, `patience_count`, `mAP50-95`, `mAP50`, `mAP75`, `AR100`.
+W&B dùng `wandb_epoch_payload()` (`train_loss`, `val_loss`, `lr`, `val/mAP50-95`, …).
+
+YOLO: `train_loss` = tổng loss train native; `val_loss` = `val/box_loss` Ultralytics.
+
+## Trạng thái YOLO (sau thống nhất COCOeval)
+
+- **Chọn best + early stop:** val **COCOeval** qua `evaluate_split_coco(..., split="val")` trên `trainer.last` mỗi epoch; metric chính `mAP50-95`.
+- **Test / `run_eval`:** cùng `pycocotools.COCOeval bbox` như Faster R-CNN (`vn_tsd/eval/coco_eval.py`), postprocess `score_thresh`/`nms_thresh`/`detections_per_img` khớp yaml.
+- **`test_metrics.json`:** `metrics` = COCO; `metrics_native` = Ultralytics (tham khảo, không dùng chọn model).
+- **`metrics.json`:** `metric_source: pycocotools.COCOeval bbox`, cùng khung với Faster R-CNN.
 
 ## Đề xuất trao đổi với team Faster R-CNN
 

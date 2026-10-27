@@ -4,27 +4,38 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from unittest.mock import patch
+
 from vn_tsd.pipelines.yolo.tracking import Tracking
 
 
 def test_script_tracking_logs_epoch_once_and_keeps_missing_ar100(tmp_path):
-    tracking = Tracking({}, tmp_path, main=True)
+    tracking = Tracking({'train': {'epochs': 2, 'early_stopping_patience': 10}}, tmp_path, main=True)
     tracking.run = Mock()
+    last_ckpt = tmp_path / 'last.pt'
+    last_ckpt.write_bytes(b'weights')
     trainer = SimpleNamespace(
-        epoch=0, validator=SimpleNamespace(metrics=SimpleNamespace(
-            box=SimpleNamespace(map=0.4, map50=0.7, map75=0.45))),
+        epoch=0,
         tloss=None, label_loss_items=lambda *args, **kwargs: {'train/box_loss': 1.2},
-        metrics={'val/box_loss': 1.0}, lr={'pg0': 0.01},
+        metrics={'val/box_loss': 1.0}, lr={'pg0': 0.01}, last=last_ckpt, stop=False,
     )
-    tracking.mark_epoch(trainer)
-    tracking.log_epoch(trainer)
-    tracking.log_epoch(trainer)
-    trainer.epoch = 1
-    tracking.log_epoch(trainer)
+    coco_val = {"metrics": {"mAP50-95": 0.4, "mAP50": 0.7, "mAP75": 0.45, "AR100": None}}
+    with patch("vn_tsd.pipelines.yolo.tracking.evaluate_split_coco", return_value=coco_val):
+        tracking.mark_epoch(trainer)
+        tracking.log_epoch(trainer)
+        tracking.log_epoch(trainer)
+        trainer.epoch = 1
+        tracking.log_epoch(trainer)
     assert tracking.run.log.call_count == 1
-    assert tracking.run.log.call_args.args[0]['val/mAP75'] == 0.45
-    assert 'val/AR100' not in tracking.run.log.call_args.args[0]
-    assert json.loads((tmp_path / 'history.json').read_text())[0]['val/AR100'] is None
+    payload = tracking.run.log.call_args.args[0]
+    assert payload['val/mAP75'] == 0.45
+    assert payload['train_loss'] == 1.2
+    assert payload['val_loss'] == 1.0
+    assert 'val/AR100' not in payload
+    history = json.loads((tmp_path / 'history.json').read_text())
+    assert history[0]['AR100'] is None
+    assert history[0]['is_best'] is True
+    assert (tmp_path / 'checkpoints' / 'checkpoint_best.pt').read_bytes() == b'weights'
 
 
 def test_worker_does_not_initialize_tracking_or_write_history(tmp_path):
@@ -103,8 +114,12 @@ def test_dataset_preparation_creates_writable_copy(tmp_path, monkeypatch):
         (source / 'images' / split / 'sample.jpg').write_bytes(b'image')
     save_yaml({'path': '/old/machine', 'names': ['sign']}, source / 'data.yaml')
     notebook = json.loads((Path(__file__).resolve().parents[1] / 'notebooks/04_train_yolo26m.ipynb').read_text())
-    code = ''.join(notebook['cells'][12]['source']).replace("Path('/kaggle/working')", repr(working))
-    env = {'PROCESSED_ROOT': str(source), 'PosixPath': type(working)}
+    code = next(
+        ''.join(c['source'])
+        for c in notebook['cells']
+        if c['cell_type'] == 'code' and 'yolo_dataset_' in ''.join(c['source'])
+    ).replace('working = Path("/kaggle/working")', f'working = Path({str(working)!r})')
+    env = {'PROCESSED_ROOT': str(source), 'Path': Path}
     exec(compile(code, '<dataset-cell>', 'exec'), env)
     target = Path(env['PROCESSED_ROOT'])
     assert not (target / 'images').is_symlink()

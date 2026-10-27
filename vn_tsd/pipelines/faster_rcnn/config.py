@@ -7,8 +7,8 @@ from pathlib import Path
 
 WEIGHTS = "FasterRCNN_ResNet50_FPN_Weights.COCO_V1"
 MODEL_DEFAULTS = dict(weights=WEIGHTS, trainable_backbone_layers=5, frozen_bn_eps=0.0,
-                      score_thresh=0.001, nms_thresh=0.5, detections_per_img=100)
-TRAIN_DEFAULTS = dict(scheduler="cosine", warmup_epochs=1, warmup_start_factor=0.001, min_lr=1e-6)
+                      score_thresh=0.001, nms_thresh=0.5, detections_per_img=12)
+TRAIN_DEFAULTS = dict(scheduler="cosine", warmup_epochs=5, warmup_start_factor=0.001, min_lr=1e-6)
 ONLINE_DEFAULTS = dict(mosaic_prob=1.0, mixup_prob=0.1, mixup_alpha=32.0,
                        color_jitter_params=dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02))
 HEAD_KEYS = {"head", "head_hidden_dim", "head_dropout"}
@@ -71,8 +71,7 @@ def validate_config(cfg):
                 raise ValueError(f"{key} must be a boolean")
     for k in ("score_thresh", "nms_thresh"):
         _number(m[k], f"model.{k}", 0, 1)
-    if m["detections_per_img"] != 100:
-        raise ValueError("v1 evaluator requires detections_per_img=100")
+    _number(m["detections_per_img"], "model.detections_per_img", 1, integer=True)
     for k in ("epochs", "batch_size", "early_stopping_patience"):
         _number(t[k], f"train.{k}", 1, integer=True)
     _number(c["eval"]["batch_size"], "eval.batch_size", 1, integer=True)
@@ -86,8 +85,9 @@ def validate_config(cfg):
         _number(t[k], f"train.{k}", 0)
     if t["lr"] <= 0 or t["momentum"] >= 1:
         raise ValueError("Require positive LR and momentum <1")
-    if t["scheduler"] != "cosine" or t["warmup_epochs"] != 1:
-        raise ValueError("v1 supports cosine with one warmup epoch")
+    if t["scheduler"] != "cosine":
+        raise ValueError("v1 supports cosine scheduler only")
+    _number(t["warmup_epochs"], "train.warmup_epochs", 1, integer=True)
     _number(t["warmup_start_factor"], "warmup_start_factor", 0, 1)
     _number(t["min_lr"], "min_lr", 0, t["lr"])
     if t["warmup_start_factor"] == 0:
