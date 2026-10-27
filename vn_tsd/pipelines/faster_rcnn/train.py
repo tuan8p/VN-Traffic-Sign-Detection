@@ -22,7 +22,7 @@ class FasterRCNNPipeline(BasePipeline):
         except Exception as exc:
             # A controlled failure is reported without marking an unfinished run completed.
             # Hard worker/NCCL failures are handled by torchrun's worker supervision.
-            if ctx.main and getattr(self, "_started", False):
+            if ctx.main:
                 from .artifacts import write_json
                 try:
                     failure = dict(status="failed", pipeline=self.name, error=str(exc))

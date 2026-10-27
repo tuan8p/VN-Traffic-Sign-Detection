@@ -179,3 +179,25 @@ def test_ddp_rejects_uneven_global_batch(pipeline, monkeypatch):
     pipeline.cfg['train']['batch_size'] = 7
     with pytest.raises(ValueError, match='divisible'):
         pipeline._build_train_args()
+
+
+def test_fit_writes_failure_json_on_error(pipeline):
+    model = Mock()
+    model.train.side_effect = RuntimeError("boom")
+    tracking = Mock()
+    tracking.run = None
+    tracking.finish = Mock()
+
+    with (
+        patch("vn_tsd.pipelines.yolo.model.build_yolo26m", return_value=model),
+        patch("vn_tsd.pipelines.yolo.tracking.Tracking", return_value=tracking),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        pipeline.fit()
+
+    doc = json.loads((pipeline.run_dir / "failure.json").read_text(encoding="utf-8"))
+    assert doc["status"] == "failed"
+    assert doc["pipeline"] == "yolo26m"
+    assert "boom" in doc["error"]
+    metrics = json.loads((pipeline.run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["status"] == "failed"
