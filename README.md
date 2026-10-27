@@ -12,6 +12,7 @@ Bốn người. Mỗi TODO ghi tên team. Danh sách file: TEAM_CHECKLIST.md.
 - **Team pipeline YOLO26m + preprocessing online**: vn_tsd/pipelines/yolo/, configs/pipelines/yolo26m.yaml, notebook 04, nhánh eval YOLO.
 - **Team pipeline Faster R-CNN + preprocessing online**: vn_tsd/pipelines/faster_rcnn/, configs/pipelines/faster_rcnn.yaml, notebook 03, nhánh eval Faster R-CNN.
 - **Team demo + phân tích hình học và cấu trúc cảnh**: demo/ (kể cả demo/geometry.py), notebook 05. Hình học và cấu trúc cảnh theo mục 3.2 đề tổng hợp. Demo vẽ box từ checkpoint, không train model.
+
 ## Phân tích dữ liệu
 
 Team analysis + preprocessing offline làm hai lần, cùng một bộ hình.
@@ -55,7 +56,6 @@ Hết epoch in một dòng, cùng thứ tự metric:
 
 Khi val mAP50-95 tốt hơn thì thêm `-> [BEST VAL mAP50-95: 0.4100]`. Early stop in `[train] early stopping at epoch 10 (patience=10)`.
 
-
 ## Lệnh torchrun
 
 Kaggle 2× T4, chạy từ thư mục gốc repo. Batch trong config là tổng của hai GPU.
@@ -72,7 +72,7 @@ YOLO26m:
 torchrun --nproc_per_node=2 -m tools.run_train --pipeline yolo26m --runtime configs/runtime/kaggle.yaml --run-name yolo26m_s42_ep50_bs8
 ```
 
-Mặc định là Kaggle 2× T4 với torchrun --nproc_per_node=2. Local chỉ để thử pipeline có chạy được không, dùng python -m tools.run_train và configs/runtime/local.yaml, không cố định số GPU. Thêm --data-root nếu cache không nằm ở data/processed. Thêm --online khi đang tune preprocessing online. Tên run thêm _online trước hash 8 ký tự ở đuôi.
+Mặc định là Kaggle 2× T4 với torchrun --nproc_per_node=2. Local chỉ để thử pipeline có chạy được không, dùng python -m tools.run_train và configs/runtime/local.yaml, không cố định số GPU. Thêm --data-root nếu cache không nằm ở data/processed. Thêm --online khi đang tune preprocessing online. Tên run thêm_online trước hash 8 ký tự ở đuôi.
 
 ## W&B
 
@@ -84,7 +84,6 @@ Tên run hiện trên W&B, cả hai pipeline dùng một kiểu:
 
 Ví dụ `yolo26m_s42_ep50_bs8_a1b2c3d4` và `faster_rcnn_s42_ep20_bs8_a1b2c3d4`. Bật online preprocess thì thêm `_online` ngay trước hash. Seed lúc tìm config là 42. Bốn seed còn lại chỉ đổi số sau `s`. Hash 8 ký tự ở đuôi do with_run_hash gắn, để hai lần chạy cùng config không trùng tên trên W&B.
 
-
 ## Nhánh
 
 Mỗi team tự tạo nhánh từ main và làm trên nhánh đó:
@@ -93,10 +92,11 @@ Mỗi team tự tạo nhánh từ main và làm trên nhánh đó:
 - yolo
 - faster-rcnn
 - demo
+
 ## Layout
 
 | Path | Role |
-|------|------|
+| ------ | ------ |
 | `vn_tsd/data/preprocess_offline.py` | Shared cache (images + YOLO labels) |
 | `vn_tsd/data/preprocess_online.py` | Optional per-batch toggles |
 | `vn_tsd/pipelines/faster_rcnn/` | torchvision Faster R-CNN ResNet-50 |
@@ -166,17 +166,19 @@ failures during training. Only rank 0 starts W&B and writes history/checkpoints.
 DDP launch requires explicit shared --run-dir and --run-name. Existing resolved
 runs are rejected; this implementation does not add training resume.
 
-Set EPOCHS=1 for the first two-GPU smoke test. The notebook forces
-`eval.auto_eval_test=false` for DDP. With `EVALUATE_TEST=True`, it launches
-`tools.run_eval` once, in a separate process after both workers exit successfully.
-Evaluation uses one GPU and the configured total eval batch (not distributed
-like Faster R-CNN), so check memory separately. Test metrics are saved in
-`test_metrics.json`; they are not added to the already-finished W&B run.
-Finally, notebook creates run.zip. Keep test disabled while tuning.
+Set EPOCHS=1 for the first two-GPU smoke test. With `eval.auto_eval_test=true`
+(notebook `EVALUATE_TEST=True`), rank 0 in `tools.run_train` spawns a single-GPU
+`tools.run_eval` after DDP train, updates `metrics.json`, then rebuilds `run.zip`.
+Test metrics are not added to the already-finished W&B run. Evaluation uses one
+GPU and the configured total eval batch (not distributed like Faster R-CNN).
+
+Kaggle notebooks write runs under the cloned repo: `outputs/<pipeline>/<run_id>/`
+(not a sibling folder outside the repo).
 
 W&B loss/validation AP/LR charts are in the rank-zero run URL stored in
-wandb_run.json. AR100 remains unavailable. Native Ultralytics fitness and COCO
-comparability still need validation before the final benchmark. Local mocked
+wandb_run.json. Both pipelines select best and report test AP with shared
+`pycocotools.COCOeval bbox` (see `vn_tsd/eval/coco_eval.py`). YOLO also stores
+`metrics_native` from Ultralytics for reference only. Local mocked
 checks do not establish that CUDA/NCCL or server authentication works: validate
 one epoch on Kaggle and verify one run, two GPU workers and one best checkpoint.
 

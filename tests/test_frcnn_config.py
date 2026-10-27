@@ -24,7 +24,7 @@ def resolved_config():
     ("model", "head", "unknown"), ("model", "head_hidden_dim", 0),
     ("model", "head_hidden_dim", 12.5), ("model", "head_dropout", 1),
     ("model", "head_dropout", float("nan")),
-    ("train", "warmup_epochs", 2), ("train", "warmup_start_factor", 0),
+    ("train", "warmup_epochs", 0), ("train", "warmup_start_factor", 0),
     ("train", "lr", float("nan")), ("train", "epohcs", 2),
     ("runtime_cfg", "device", "auto"), ("online_preprocess", "enabled", "false"),
     ("eval", "auto_eval_test", "false"), ("data", "root", None), ("train", "batch_size", 8.0),

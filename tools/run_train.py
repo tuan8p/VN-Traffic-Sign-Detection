@@ -84,6 +84,13 @@ def main(argv=None) -> None:
         from vn_tsd.pipelines.yolo.train import YOLOPipeline as P
     metrics = P(cfg, run_dir).fit()
     if int(os.environ.get("RANK", "0")) == 0:
+        if args.pipeline == "yolo26m":
+            from vn_tsd.runtime.post_train import yolo_run_deferred_test
+
+            if yolo_run_deferred_test(cfg, run_dir):
+                import json
+
+                metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
         print("run_dir:", run_dir)
         print("metrics:", metrics)
 

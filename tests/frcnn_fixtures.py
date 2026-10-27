@@ -13,7 +13,10 @@ def make_cache(root, train=3, val=1, test=2):
     root = Path(root)
     names, _ = read_class_names("configs/classes.csv")
     root.mkdir(parents=True, exist_ok=True)
-    (root/"data.yaml").write_text(yaml.safe_dump(dict(nc=52, names=names, path="/old/build/machine"), allow_unicode=True), encoding="utf-8")
+    (root/"data.yaml").write_text(yaml.safe_dump(dict(
+        nc=52, names=names, path=str(root),
+        train="images/train", val="images/val", test="images/test",
+    ), allow_unicode=True), encoding="utf-8")
     (root/"meta.json").write_text(json.dumps(dict(synthetic=True, unknown_field="allowed")), encoding="utf-8")
     for s, count in (("train", train), ("val", val), ("test", test)):
         for kind in ("images", "labels"):

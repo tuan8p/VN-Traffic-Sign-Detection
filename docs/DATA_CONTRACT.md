@@ -77,6 +77,8 @@ names:
 
 ## Rules
 
+- **Train / val / test** đều lấy từ cache preprocess dưới `data.root` (`data.yaml` + `images/*` + `labels/*`). Hai pipeline gọi `validate_processed_dataset()` trước train/eval; không dùng tập val/test bên ngoài.
+- **Ngoại lệ duy nhất:** checkpoint pretrain (`FasterRCNN_ResNet50_FPN COCO_V1`, `yolo26m.pt`) tải từ nhà phát hành.
 - Horizontal flip **mặc định tắt** (`hflip: false` trong shared.yaml) — biển báo giao thông Việt Nam có các cặp đối xứng gương mang ý nghĩa trái ngược.
 - Primary metric: **mAP@0.50:0.95** (`mAP50-95`). Cũng báo `mAP50`, `mAP75`, `AR@100`.
 - Cả hai pipeline (Faster R-CNN và YOLO26m) đọc **cùng một cây** `data/processed/`. Online aug là switch tune riêng, không sửa cache này.

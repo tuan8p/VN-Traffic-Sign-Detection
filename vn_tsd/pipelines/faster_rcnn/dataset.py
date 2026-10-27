@@ -137,7 +137,8 @@ class ProcessedDataset:
 
 
 def load_cache(cfg, splits=("train", "val", "test"), saved_names=None):
-    root = Path(cfg["data"]["root"]).expanduser().resolve()
+    from vn_tsd.data.dataset_contract import validate_processed_dataset
+    root = validate_processed_dataset(cfg)
     data = load_yaml(root/"data.yaml")
     meta_path = root/"meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))

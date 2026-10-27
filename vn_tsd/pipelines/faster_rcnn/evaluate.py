@@ -2,46 +2,14 @@
 from __future__ import annotations
 
 import contextlib
-import copy
-import importlib.metadata
-import io
 import random
 
 import numpy as np
 import torch
 
-from vn_tsd.eval.metrics import summarize
+from vn_tsd.eval.coco_eval import coco_metrics, evaluator_metadata
 
 LOSS_KEYS = ("loss_classifier", "loss_box_reg", "loss_objectness", "loss_rpn_box_reg")
-
-
-def coco_metrics(ground_truth, predictions):
-    from pycocotools.coco import COCO
-    from pycocotools.cocoeval import COCOeval
-    with contextlib.redirect_stdout(io.StringIO()):
-        gt = COCO()
-        gt.dataset = copy.deepcopy(ground_truth)
-        gt.createIndex()
-        if predictions:
-            dt = gt.loadRes(predictions)
-        else:
-            dt = COCO()
-            dt.dataset = dict(images=gt.dataset["images"], categories=gt.dataset["categories"], annotations=[])
-            dt.createIndex()
-        evaluator = COCOeval(gt, dt, "bbox")
-        evaluator.params.maxDets = [1, 10, 100]
-        evaluator.evaluate()
-        evaluator.accumulate()
-        evaluator.summarize()
-    values = [None if evaluator.stats[i] == -1 else float(evaluator.stats[i]) for i in (0, 1, 2, 8)]
-    return summarize(dict(zip(("mAP50-95", "mAP50", "mAP75", "AR100"), values)))
-
-
-def evaluator_metadata(cfg):
-    m = cfg["model"]
-    return dict(evaluator="pycocotools.COCOeval bbox", version=importlib.metadata.version("pycocotools"),
-        iou="0.50:0.05:0.95", area="all", maxDets=[1, 10, 100], stats_indices=[0, 1, 2, 8],
-        score_thresh=m["score_thresh"], nms_thresh=m["nms_thresh"], detections_per_img=100)
 
 
 def to_device(images, targets, device):

@@ -72,21 +72,41 @@ def test_cli_saved_config_and_branch_dispatch(tmp_path, monkeypatch):
 def test_notebook_cells_parse_and_scaffold_train_launch(tmp_path, monkeypatch):
     import ast
     from pathlib import Path
+    from types import SimpleNamespace
+
     notebook = json.loads((REPO_ROOT/"notebooks/03_train_faster_rcnn.ipynb").read_text(encoding="utf-8"))
     code_cells = ["".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code"]
     for source in code_cells:
         ast.parse(source)
     commands = []
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: commands.append((argv, kw)))
-    globals_ = dict(PIPELINE="faster_rcnn", RUN_NAME="faster_rcnn_s42_deadbeef",
-        OVERRIDES_PATH=tmp_path/"overrides with spaces.yaml",
-        PROCESSED_ROOT=str(tmp_path/"cache with spaces"), ONLINE=False)
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(device_count=lambda: 1))
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    import vn_tsd.runtime.run_dir as run_dir_mod
+
+    monkeypatch.setattr(
+        run_dir_mod,
+        "make_run_dir",
+        lambda _root, _pipe, _name: tmp_path / "run",
+    )
+    globals_ = dict(
+        PIPELINE="faster_rcnn",
+        RUN_NAME="faster_rcnn_s42_deadbeef",
+        OVERRIDES_PATH=tmp_path / "overrides with spaces.yaml",
+        PROCESSED_ROOT=str(tmp_path / "cache with spaces"),
+        ONLINE=False,
+        EVALUATE_TEST=False,
+        OVERRIDES={"data": {"root": ""}, "train": {"batch_size": 8, "run_name": ""}, "eval": {}},
+        cfg={"train": {"batch_size": 8}},
+        __name__="__main__",
+    )
     training_cell = next(c for c in code_cells if '"tools.run_train"' in c)
     exec(compile(training_cell, "notebook-train-cell", "exec"), globals_)
     argv, kw = commands[0]
     assert "tools.run_train" in argv
     assert argv[argv.index("--pipeline")+1] == "faster_rcnn"
-    assert argv[argv.index("--overrides")+1] == str(globals_["OVERRIDES_PATH"])
+    assert argv[argv.index("--overrides")+1].endswith("launch_overrides.yaml")
+    assert argv[argv.index("--run-dir")+1] == str(tmp_path / "run")
     assert argv[argv.index("--data-root")+1] == globals_["PROCESSED_ROOT"]
     assert argv[argv.index("--run-name")+1].endswith("deadbeef")
     assert kw["check"] is True

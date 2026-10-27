@@ -1,4 +1,4 @@
-from vn_tsd.runtime.train_log import METRIC_KEYS, format_epoch_line, history_row, log_early_stop
+from vn_tsd.runtime.train_log import METRIC_KEYS, format_epoch_line, history_row, log_early_stop, wandb_epoch_payload
 
 def test_epoch_line_matches_both_pipelines():
     metrics = {"mAP50-95": 0.41, "mAP50": 0.72, "mAP75": 0.45, "AR100": 0.55}
@@ -11,8 +11,12 @@ def test_epoch_line_matches_both_pipelines():
     assert [key for key in METRIC_KEYS if key in line] == list(METRIC_KEYS)
 
 def test_history_row_keys():
-    row = history_row(2, 1.0, 0.5, {"mAP50-95": 0.1}, 0.01)
-    assert list(row) == ["epoch", "train_loss", "val_loss", "lr", "mAP50-95", "mAP50", "mAP75", "AR100"]
+    row = history_row(2, 1.0, 0.5, {"mAP50-95": 0.1}, 0.01, is_best=False, patience_count=3)
+    assert list(row) == [
+        "epoch", "train_loss", "val_loss", "lr", "is_best", "patience_count",
+        "mAP50-95", "mAP50", "mAP75", "AR100",
+    ]
+    assert row["patience_count"] == 3
     assert row["mAP50"] is None
     # Đồng bộ test logger dùng chung theo METRICS_CONTRACT.md ở nhánh yolo:
     assert row["mAP50"] is None # input thiếu mAP50 phải giữ None (JSON null), không giả định đã đo được 0.
@@ -24,3 +28,10 @@ def test_unavailable_metric_is_na_not_zero():
 
 def test_early_stop_line():
     assert log_early_stop(10, 10, is_main=False) == "[train] early stopping at epoch 10 (patience=10)"
+
+
+def test_wandb_payload_omits_missing_ar100():
+    row = history_row(1, 1.0, 0.5, {"mAP50-95": 0.3}, 0.01, is_best=True, patience_count=0)
+    payload = wandb_epoch_payload(row)
+    assert payload["val/mAP50-95"] == 0.3
+    assert "val/AR100" not in payload

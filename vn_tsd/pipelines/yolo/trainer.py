@@ -8,8 +8,6 @@ from ultralytics.models.yolo.detect.train import DetectionTrainer
 
 class LauncherDetectionTrainer(DetectionTrainer):
     def _setup_ddp(self):
-        # Reinitializing the default group after destroy can reuse stale rendezvous
-        # state. Keep the launcher's group alive through setup, train and finalization.
         if not dist.is_initialized():
             raise RuntimeError('Launcher DDP process group must be initialized before training')
         rank = int(os.environ['RANK'])
@@ -22,3 +20,8 @@ class LauncherDetectionTrainer(DetectionTrainer):
         self.accelerator = torch.cuda
         self.accelerator.set_device(local_rank)
         os.environ['TORCH_NCCL_BLOCKING_WAIT'] = '1'
+
+    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
+        if mode == "val":
+            batch_size = int(getattr(self.args, "eval_batch_size", batch_size))
+        return super().get_dataloader(dataset_path, batch_size, rank, mode)

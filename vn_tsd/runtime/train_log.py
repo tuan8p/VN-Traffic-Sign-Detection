@@ -4,14 +4,10 @@ Same progress bar and epoch line as the classification DL pipeline,
 with detection metrics instead of accuracy and macro F1.
 Both teams call this. Do not print a different epoch format.
 
-TODO [Hai team pipeline]: gọi history_row/log_epoch bằng metric VALIDATION sau
-mỗi epoch; chỉ rank chính in log và ghi history.json. Metric thiếu giữ None
-(JSON null), hiển thị N/A. Không đổi thành 0 để che phần chưa triển khai.
-TODO [Team pipeline Faster R-CNN + preprocessing online]: chọn best/early stop
-bằng validation mAP50-95 trong train loop; is_best chỉ đánh dấu để hiển thị,
-Team Faster R-CNN selects best/early stop bằng validation mAP50-95 trong train loop;
-is_best chỉ đánh dấu để hiển thị,
-module logging này không tự lưu checkpoint hoặc điều khiển early stopping.
+Cả hai pipeline gọi history_row/log_epoch sau validation mỗi epoch (rank 0).
+history.json: epoch, train_loss, val_loss, lr, is_best, patience_count, bốn metric.
+Metric thiếu = null / log N/A. wandb_epoch_payload() dùng cho W&B.
+Module này không lưu checkpoint hay điều khiển early stopping.
 """
 from __future__ import annotations
 
@@ -53,16 +49,37 @@ def history_row(
     val_loss: float,
     metrics: dict[str, Any],
     lr: float,
+    *,
+    is_best: bool = False,
+    patience_count: int = 0,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "epoch": epoch,
         "train_loss": round(float(train_loss), 5),
         "val_loss": round(float(val_loss), 5),
         "lr": float(lr),
+        "is_best": bool(is_best),
+        "patience_count": int(patience_count),
     }
     for key, value in summarize(metrics).items():
         row[key] = round(value, 5) if value is not None else None
     return row
+
+
+def wandb_epoch_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Shared W&B keys for Faster R-CNN and YOLO (validation metrics only)."""
+    payload: dict[str, Any] = {
+        "train_loss": row["train_loss"],
+        "val_loss": row["val_loss"],
+        "lr": row["lr"],
+        "is_best": row.get("is_best", False),
+        "patience_count": row.get("patience_count", 0),
+    }
+    for key in METRIC_KEYS:
+        value = row.get(key)
+        if value is not None:
+            payload[f"val/{key}"] = value
+    return payload
 
 
 def format_epoch_line(
