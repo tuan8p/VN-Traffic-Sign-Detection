@@ -81,8 +81,17 @@ class Context:
                 dist.broadcast(buffer, src=0)
 
     def close(self):
-        if self.owns_group and dist.is_initialized():
-            dist.destroy_process_group()
+        if self.world <= 1 or not dist.is_initialized():
+            return
+        try:
+            dist.barrier()
+        except Exception:
+            pass
+        if self.owns_group:
+            try:
+                dist.destroy_process_group()
+            except Exception:
+                pass
 
 
 def eval_indices(length, rank, world):
