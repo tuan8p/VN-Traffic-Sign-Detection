@@ -179,3 +179,11 @@ wandb_run.json. AR100 remains unavailable. Native Ultralytics fitness and COCO
 comparability still need validation before the final benchmark. Local mocked
 checks do not establish that CUDA/NCCL or server authentication works: validate
 one epoch on Kaggle and verify one run, two GPU workers and one best checkpoint.
+
+Dataset startup can exceed five minutes on cold Kaggle Input storage while the
+other rank waits in a barrier. Notebook 04 copies images and labels to a fresh
+Working directory (not symlinks), so Ultralytics can save its label cache.
+`runtime_cfg.ddp_timeout_seconds` defaults to 1800 and is explicit in Kaggle YAML;
+it bounds collective waits, including dataset setup. A longer timeout does not
+fix mismatched collectives: inspect progress and the first worker error if a run
+still stalls. Restart the session after a CUDA/NCCL watchdog failure before retrying.

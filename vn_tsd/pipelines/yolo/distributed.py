@@ -7,7 +7,11 @@ import torch.distributed as dist
 
 
 class Context:
-    def __init__(self):
+    def __init__(self, runtime=None):
+        # Rank 1 can wait while rank 0 scans the full dataset before a barrier.
+        timeout_seconds = (runtime or {}).get('ddp_timeout_seconds', 1800)
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
+            raise ValueError('runtime_cfg.ddp_timeout_seconds must be a positive integer')
         self.rank = int(os.environ.get('RANK', '0'))
         self.world = int(os.environ.get('WORLD_SIZE', '1'))
         self.local_rank = int(os.environ.get('LOCAL_RANK', '0'))
@@ -20,7 +24,7 @@ class Context:
                 raise RuntimeError('DDP requires one visible CUDA GPU per worker')
             torch.cuda.set_device(self.local_rank)
             if not dist.is_initialized():
-                dist.init_process_group('nccl', timeout=timedelta(minutes=5))
+                dist.init_process_group('nccl', timeout=timedelta(seconds=timeout_seconds))
                 self.owns_group = True
 
     def phase(self, fn):

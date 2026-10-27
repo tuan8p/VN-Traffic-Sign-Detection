@@ -170,7 +170,7 @@ def test_ddp_worker_only_trains(pipeline, monkeypatch):
     pipeline.cfg['eval']['auto_eval_test'] = False
     ctx = Mock(main=False, world=2)
     ctx.phase.side_effect = lambda fn: fn()
-    monkeypatch.setattr(distributed, 'Context', lambda: ctx)
+    monkeypatch.setattr(distributed, 'Context', lambda runtime: ctx)
     model = Mock()
     with patch('vn_tsd.pipelines.yolo.train.build_yolo26m', return_value=model), \
          patch.object(pipeline, 'evaluate') as evaluate, \
