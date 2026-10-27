@@ -9,7 +9,7 @@ test chỉ đánh giá model đã chọn, không dùng để tune hay chọn che
 W&B dự kiến tích hợp ở notebook Kaggle; hiện file này chưa quản lý W&B.
 """
 from __future__ import annotations
-from typing import Any
+from typing import Any, Callable
 from pathlib import Path
 import shutil
 
@@ -107,13 +107,19 @@ class YOLOPipeline(BasePipeline):
 
         return checkpoint_path
 
-    def fit(self) -> dict[str, Any]:
+    def fit(
+        self, *, callbacks: dict[str, list[Callable]] | None = None
+    ) -> dict[str, Any]:
 
         save_yaml(self.cfg, self.run_dir / "resolved_config.yaml")
 
         train_args = self._build_train_args()
 
         model = build_yolo26m(self.cfg)
+        # Notebook owns tracking lifecycle; pipeline only attaches supplied callbacks.
+        for event, handlers in (callbacks or {}).items():
+            for handler in handlers:
+                model.add_callback(event, handler)
         model.train(**train_args)
         self._save_checkpoint(model)
         test_metrics = self.evaluate()
