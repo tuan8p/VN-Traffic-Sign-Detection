@@ -9,6 +9,8 @@ mỗi epoch; chỉ rank chính in log và ghi history.json. Metric thiếu giữ
 (JSON null), hiển thị N/A. Không đổi thành 0 để che phần chưa triển khai.
 TODO [Team pipeline Faster R-CNN + preprocessing online]: chọn best/early stop
 bằng validation mAP50-95 trong train loop; is_best chỉ đánh dấu để hiển thị,
+Team Faster R-CNN selects best/early stop bằng validation mAP50-95 trong train loop;
+is_best chỉ đánh dấu để hiển thị,
 module logging này không tự lưu checkpoint hoặc điều khiển early stopping.
 """
 from __future__ import annotations
