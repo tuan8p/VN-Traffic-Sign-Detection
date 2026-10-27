@@ -183,7 +183,8 @@ def test_ddp_worker_only_trains(pipeline, monkeypatch):
     save.assert_not_called()
     assert not (pipeline.run_dir / 'metrics.json').exists()
     assert result['status'] == 'worker_finished'
-    ctx.handoff.assert_called_once()
+    from vn_tsd.pipelines.yolo.trainer import LauncherDetectionTrainer
+    assert model.train.call_args.kwargs["trainer"] is LauncherDetectionTrainer
     ctx.close.assert_called_once()
 
 

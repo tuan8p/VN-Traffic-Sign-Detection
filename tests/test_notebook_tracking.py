@@ -67,7 +67,7 @@ def test_tracking_failure_finishes_run_once(tmp_path, monkeypatch):
     sdk.init.return_value.finish.assert_called_once_with(exit_code=1)
 
 
-def test_group_handoff_leaves_ultralytics_to_initialize(monkeypatch):
+def test_group_is_kept_alive_until_context_close(monkeypatch):
     from vn_tsd.pipelines.yolo import distributed
     monkeypatch.setenv('RANK', '0')
     monkeypatch.setenv('LOCAL_RANK', '0')
@@ -83,10 +83,8 @@ def test_group_handoff_leaves_ultralytics_to_initialize(monkeypatch):
     monkeypatch.setattr(distributed, 'dist', dist)
     ctx = distributed.Context()
     assert state['initialized']
-    ctx.handoff()
-    assert not state['initialized']
-    dist.barrier.assert_called_once()
-    state['initialized'] = True  # Ultralytics training group now exists
+    # No handoff/destroy occurs before training.
+    dist.destroy_process_group.assert_not_called()
     ctx.close()
     assert not state['initialized']
-    assert dist.destroy_process_group.call_count == 2
+    assert dist.destroy_process_group.call_count == 1

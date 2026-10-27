@@ -39,13 +39,6 @@ class Context:
             raise RuntimeError('; '.join(e for e in errors if e))
         return result
 
-    def handoff(self):
-        # Ultralytics initializes its own group unconditionally in _setup_ddp.
-        # Finish preflight collectives before handing group ownership to it.
-        if self.world > 1 and dist.is_initialized():
-            dist.barrier()
-            dist.destroy_process_group()
-
     def close(self):
         if self.owns_group and dist.is_initialized():
             dist.destroy_process_group()
