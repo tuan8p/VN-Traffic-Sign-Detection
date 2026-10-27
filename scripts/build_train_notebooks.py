@@ -170,8 +170,8 @@ import time
 
 from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
 
-# False = symlink Input → Working vài giây + cache (ổn định DDP). True = 0s nhưng dễ lỗi ghi Input / Broken pipe.
-YOLO_SKIP_DATASET_STAGE = False
+# Kaggle: True = §6 ~0s (đọc Input, cache=False). False = symlink vài giây + cache (ổn định hơn).
+YOLO_SKIP_DATASET_STAGE = Path("/kaggle/working").exists()
 
 source_root = Path(PROCESSED_ROOT).resolve()
 if not (source_root / "data.yaml").is_file():
@@ -527,7 +527,7 @@ def main() -> None:
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/yolo26m.yaml`.\n",
                     "specific_code": YOLO_SPECIFIC,
-                    "data_prep_md": "## 6) Dataset (YOLO)\n\n**Mặc định:** symlink `images/` + `labels/` sang Working (vài giây) để Ultralytics ghi `.cache` — tránh crash DDP / `Broken pipe` khi train trực tiếp trên Input read-only. Chỉ bật `YOLO_SKIP_DATASET_STAGE=True` nếu chấp nhận `cache=False` và rủi ro permission.\n",
+                    "data_prep_md": "## 6) Dataset (YOLO)\n\n**Kaggle mặc định:** `YOLO_SKIP_DATASET_STAGE=True` → **~0 giây** (train `cache=False`). Nếu DDP/`Broken pipe`: đặt `False` → chỉ **symlink** (không copy file từ Input; code cũ copytree có thể **>10 phút**).\n",
                     "data_prep_code": YOLO_COPY,
                 }
             ),

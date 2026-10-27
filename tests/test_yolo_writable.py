@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from vn_tsd.data import yolo_writable
 from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
 from vn_tsd.utils.io import load_yaml, save_yaml
 
@@ -26,18 +25,14 @@ def test_full_copy_when_not_kaggle_input(tmp_path):
     assert not (source / "labels" / "train.cache").exists()
 
 
-def test_stage_symlinks_images_and_copies_labels(tmp_path):
+def test_writable_labels_cache_on_staged_copy(tmp_path):
     source = tmp_path / "processed"
     working = tmp_path / "working"
-    fixed = working / "yolo_dataset_test"
     _mini_cache(source)
-    yolo_writable._stage_kaggle_input(source, fixed)
-    yolo_writable._patch_data_yaml(fixed)
-    assert (fixed / "images" / "train").is_symlink() or (fixed / "images" / "train" / "a.jpg").is_file()
-    assert (fixed / "labels" / "train").is_symlink() or (fixed / "labels" / "train" / "a.txt").is_file()
-    assert (fixed / "labels" / "train" / "a.txt").read_text().startswith("0")
+    fixed = prepare_yolo_writable_dataset(source, working)
     (fixed / "labels" / "train.cache").write_text("ok")
     assert load_yaml(fixed / "data.yaml")["path"] == str(fixed.resolve())
+    assert not (source / "labels" / "train.cache").exists()
 
 
 def test_reuses_existing_staged_tree(tmp_path):

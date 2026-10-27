@@ -83,7 +83,8 @@ class FasterRCNNPipeline(BasePipeline):
         ctx.main_call(prepare_directory)
         ctx.main_call(
             lambda: print(
-                "[faster_rcnn] loading dataset (Kaggle Input + 2 ranks can take several minutes)…",
+                "[faster_rcnn] preflight dataset on data.root (read-only Input, "
+                "no copy to Working; 2 ranks scan/hash — có thể vài phút)…",
                 flush=True,
             )
         )
