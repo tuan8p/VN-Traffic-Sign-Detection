@@ -58,11 +58,19 @@ print(
 
 DATA = r'''from pathlib import Path
 
-# Sau Add Input trên Kaggle, dán đường dẫn dataset vào CANDIDATES (ưu tiên trên cùng).
+# Dataset processed mặc định (Kaggle Add Data); thêm path khác phía trên nếu cần.
 CANDIDATES = [
-    # "/kaggle/input/datasets/<user>/<dataset>/processed",
+    "/kaggle/input/datasets/zero001206/vn-traffic-sign-detection-preprocessed-data/processed",
     "data/processed",
 ]
+
+KAGGLE_YOLO26M = Path(
+    "/kaggle/input/models/ultralytics/yolo26/pytorch/default/1/yolo26m.pt"
+)
+if KAGGLE_YOLO26M.is_file():
+    print("[OK] YOLO26m weights:", KAGGLE_YOLO26M)
+else:
+    print("[!] Chưa thấy yolo26m.pt trên Kaggle — Add Model Ultralytics YOLO26 hoặc để Ultralytics tải khi train.")
 
 def _ready(path: Path) -> bool:
     return (path / "data.yaml").exists() and (path / "images" / "train").is_dir()
@@ -328,7 +336,7 @@ NOTEBOOK_PIPELINE = {
         "momentum": 0.937,
         "weight_decay": 0.0005,
         "lrf": 0.01,
-        "warmup_epochs": 3.0,
+        "warmup_epochs": 5.0,
         "cos_lr": True,
         "close_mosaic": 10,
     },

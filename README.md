@@ -152,6 +152,15 @@ MIT
 
 ### YOLO: notebook → torchrun (Kaggle 2 GPUs)
 
+Notebook 03/04 default processed cache:
+`/kaggle/input/datasets/zero001206/vn-traffic-sign-detection-preprocessed-data/processed`.
+Attach that dataset on Kaggle (Add Data).
+
+YOLO pretrain: attach Kaggle Model **Ultralytics YOLO26** so
+`/kaggle/input/models/ultralytics/yolo26/pytorch/default/1/yolo26m.pt` exists.
+`configs/runtime/kaggle.yaml` sets `yolo_pretrained` to that path; local runs still
+use `yolo26m.pt` (Ultralytics download) when the file is missing.
+
 Notebook 04 prepares the processed dataset, reads `WANDB_API_KEY` from Kaggle
 Secrets, creates one shared run name/directory, then launches `tools.run_train`
 with `torch.distributed.run --standalone --nproc_per_node=2`. It does not create
