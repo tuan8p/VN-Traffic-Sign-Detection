@@ -103,12 +103,12 @@ class YOLOPipeline(BasePipeline):
         from .distributed import Context
         from .tracking import Tracking, remove_native_wandb
 
-        self.cfg = validate_config(self.cfg)
         ctx = Context(self.cfg.get("runtime_cfg", {}))
         tracking = Tracking(self.cfg, self.run_dir, ctx.main)
         success = False
         train_args: dict[str, Any] = {}
         try:
+            self.cfg = validate_config(self.cfg)
             if ctx.world == 1 and not self.cfg["train"].get("run_name"):
                 from vn_tsd.runtime.run_dir import with_run_hash
                 t = self.cfg["train"]
