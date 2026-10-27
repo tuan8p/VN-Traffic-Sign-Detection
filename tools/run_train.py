@@ -5,6 +5,7 @@ This file only resolves config and the --online / --no-online switch.
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,10 @@ def main(argv=None) -> None:
         cli.setdefault("online_preprocess", {})["enabled"] = True
     if args.no_online:
         cli.setdefault("online_preprocess", {})["enabled"] = False
-    run_name = with_run_hash(args.run_name) if args.run_name else None
+    yolo_ddp = args.pipeline == "yolo26m" and int(os.environ.get("WORLD_SIZE", "1")) > 1
+    if yolo_ddp and (not args.run_dir or not args.run_name):
+        p.error("YOLO DDP requires a shared --run-dir and --run-name from the launcher")
+    run_name = args.run_name if yolo_ddp else (with_run_hash(args.run_name) if args.run_name else None)
     if run_name:
         cli.setdefault("train", {})["run_name"] = run_name
     overrides = _merge(overrides, cli)
@@ -68,8 +72,9 @@ def main(argv=None) -> None:
     set_seed(int(cfg.get("seed", 42)))
     if args.run_dir:
         run_dir = Path(args.run_dir)
-        for sub in ("logs", "figures", "checkpoints"):
-            (run_dir / sub).mkdir(parents=True, exist_ok=True)
+        if not yolo_ddp or int(os.environ.get("RANK", "0")) == 0:
+            for sub in ("logs", "figures", "checkpoints"):
+                (run_dir / sub).mkdir(parents=True, exist_ok=True)
     else:
         run_dir = make_run_dir(cfg.get("outputs", {}).get("root", "outputs"), args.pipeline, run_name)
 
@@ -78,8 +83,9 @@ def main(argv=None) -> None:
     else:
         from vn_tsd.pipelines.yolo.train import YOLOPipeline as P
     metrics = P(cfg, run_dir).fit()
-    print("run_dir:", run_dir)
-    print("metrics:", metrics)
+    if int(os.environ.get("RANK", "0")) == 0:
+        print("run_dir:", run_dir)
+        print("metrics:", metrics)
 
 if __name__ == "__main__":
     main()

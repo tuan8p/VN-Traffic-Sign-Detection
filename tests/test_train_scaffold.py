@@ -1,5 +1,11 @@
 from pathlib import Path
 from vn_tsd.config.resolve import resolve_config
+from vn_tsd.pipelines.faster_rcnn.train import FasterRCNNPipeline
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def test_faster_rcnn_fit_scaffold(tmp_path):
+    for name, cls in (("faster_rcnn", FasterRCNNPipeline),):
 from vn_tsd.pipelines.yolo.train import YOLOPipeline
 
 ROOT = Path(__file__).resolve().parents[1]

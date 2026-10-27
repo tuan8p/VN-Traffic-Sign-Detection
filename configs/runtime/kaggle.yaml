@@ -5,3 +5,6 @@ pin_memory: true
 gpus: 2
 mixed_precision: true
 # torchrun --nproc_per_node=2, same DDP mode as the classification DL pipeline.
+
+# Allows initial dataset scan on rank 0 before workers synchronize.
+ddp_timeout_seconds: 1800
