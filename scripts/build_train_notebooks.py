@@ -165,21 +165,29 @@ import time
 
 from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
 
+# Kaggle: mặc định bỏ staging (~0s), đọc Input + cache=False. Local: symlink/staging nếu cần ghi .cache.
+YOLO_SKIP_DATASET_STAGE = Path("/kaggle/working").exists()
+
 source_root = Path(PROCESSED_ROOT).resolve()
 if not (source_root / "data.yaml").is_file():
     raise FileNotFoundError(source_root / "data.yaml")
 
-working = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path.cwd() / "working"
-working.mkdir(parents=True, exist_ok=True)
-
-t0 = time.perf_counter()
-fixed_root = prepare_yolo_writable_dataset(source_root, working)
-PROCESSED_ROOT = str(fixed_root)
-elapsed = time.perf_counter() - t0
-mode = "reuse" if fixed_root == source_root.resolve() else (
-    "symlink images + labels copy" if str(source_root).startswith("/kaggle/input") else "full copy"
-)
-print(f"Writable dataset ({mode}, {elapsed:.1f}s):", PROCESSED_ROOT)'''
+on_kaggle_input = str(source_root).startswith("/kaggle/input")
+if YOLO_SKIP_DATASET_STAGE and on_kaggle_input:
+    OVERRIDES.setdefault("runtime_cfg", {})["yolo_readonly_data"] = True
+    print("Skip dataset stage; read-only Input + cache=False in train:", source_root)
+else:
+    OVERRIDES.setdefault("runtime_cfg", {})["yolo_readonly_data"] = False
+    working = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path.cwd() / "working"
+    working.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
+    fixed_root = prepare_yolo_writable_dataset(source_root, working)
+    PROCESSED_ROOT = str(fixed_root)
+    elapsed = time.perf_counter() - t0
+    mode = "reuse" if fixed_root == source_root.resolve() else (
+        "symlink only" if on_kaggle_input else "full copy"
+    )
+    print(f"Writable dataset ({mode}, {elapsed:.1f}s):", PROCESSED_ROOT)'''
 
 FRCNN_DATA_PREP = r'''# Faster R-CNN đọc cache read-only; không cần copy sang Working.
 from pathlib import Path
@@ -503,7 +511,7 @@ def main() -> None:
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/yolo26m.yaml`.\n",
                     "specific_code": YOLO_SPECIFIC,
-                    "data_prep_md": "## 6) Dataset (YOLO)\n\nChuẩn bị bản **ghi được** dưới `/kaggle/working`: copy nhãn + `data.yaml`, **symlink ảnh** từ Input (tránh copy hàng GB). Lần sau cùng dataset → tái dùng `yolo_dataset_<hash>`.\n",
+                    "data_prep_md": "## 6) Dataset (YOLO)\n\n**Kaggle (mặc định):** `YOLO_SKIP_DATASET_STAGE=True` — đọc thẳng Input, train `cache=False` (~0s). **Local:** symlink vào `working/` nếu cần ghi `.cache`. Đặt `YOLO_SKIP_DATASET_STAGE=False` trên Kaggle nếu muốn bật label cache (symlink vài giây).\n",
                     "data_prep_code": YOLO_COPY,
                 }
             ),

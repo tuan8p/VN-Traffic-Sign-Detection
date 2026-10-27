@@ -29,6 +29,12 @@ def pipeline(tmp_path):
     return YOLOPipeline(cfg, run_dir)
 
 
+def test_readonly_data_disables_label_cache(pipeline):
+    pipeline.cfg.setdefault("runtime_cfg", {})["yolo_readonly_data"] = True
+    args = pipeline._build_train_args()
+    assert args["cache"] is False
+
+
 def test_online_off_disables_augmentation(pipeline):
     pipeline.cfg["online_preprocess"]["enabled"] = False
 

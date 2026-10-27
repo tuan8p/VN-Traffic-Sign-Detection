@@ -4,6 +4,8 @@ device: cuda
 yolo_pretrained: /kaggle/input/models/ultralytics/yolo26/pytorch/default/1/yolo26m.pt
 # Default processed cache when using Add Data → zero001206/... on Kaggle.
 data_root_default: /kaggle/input/datasets/zero001206/vn-traffic-sign-detection-preprocessed-data/processed
+# Notebook 04 skips dataset staging on Kaggle; train passes cache=False (see yolo_readonly_data).
+yolo_readonly_data: true
 num_workers: 2
 pin_memory: true
 gpus: 2

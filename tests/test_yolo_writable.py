@@ -34,7 +34,8 @@ def test_stage_symlinks_images_and_copies_labels(tmp_path):
     yolo_writable._stage_kaggle_input(source, fixed)
     yolo_writable._patch_data_yaml(fixed)
     assert (fixed / "images" / "train").is_symlink() or (fixed / "images" / "train" / "a.jpg").is_file()
-    assert (fixed / "labels" / "train" / "a.txt").is_file()
+    assert (fixed / "labels" / "train").is_symlink() or (fixed / "labels" / "train" / "a.txt").is_file()
+    assert (fixed / "labels" / "train" / "a.txt").read_text().startswith("0")
     (fixed / "labels" / "train.cache").write_text("ok")
     assert load_yaml(fixed / "data.yaml")["path"] == str(fixed.resolve())
 
