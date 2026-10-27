@@ -80,6 +80,12 @@ def _stage_kaggle_input(source_root: Path, fixed_root: Path) -> None:
             shutil.copytree(src_img, dst_img)
         src_lbl = source_root / "labels" / split
         dst_lbl = fixed_root / "labels" / split
-        if dst_lbl.exists():
-            shutil.rmtree(dst_lbl)
-        shutil.copytree(src_lbl, dst_lbl)
+        dst_lbl.parent.mkdir(parents=True, exist_ok=True)
+        if dst_lbl.exists() or dst_lbl.is_symlink():
+            dst_lbl.unlink()
+        try:
+            dst_lbl.symlink_to(src_lbl, target_is_directory=True)
+        except OSError:
+            if dst_lbl.exists():
+                shutil.rmtree(dst_lbl)
+            shutil.copytree(src_lbl, dst_lbl)

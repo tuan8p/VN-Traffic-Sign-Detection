@@ -37,9 +37,12 @@ class YOLOPipeline(BasePipeline):
             device = list(range(world))
         elif device == "cuda":
             device = 0
+        readonly_data = bool(runtime_cfg.get("yolo_readonly_data", False))
+        label_cache = False if readonly_data else runtime_cfg.get("yolo_label_cache", True)
         return {
             "device": device,
             "data": str(data_yaml),
+            "cache": label_cache,
             "epochs": train_cfg["epochs"],
             "batch": train_cfg["batch_size"],
             "imgsz": model_cfg["imgsz"],
