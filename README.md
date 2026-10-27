@@ -76,7 +76,7 @@ Mặc định là Kaggle 2× T4 với torchrun --nproc_per_node=2. Local chỉ �
 
 ## W&B
 
-Team [HCMUT_IPCV](https://forge.coreweave.com/wandb/HCMUT_IPCV), project `BTL`, host `https://forge.coreweave.com`.
+Team [HCMUT_IPCV](https://forge.coreweave.com/wandb/HCMUT_IPCV), project `BTL`. SDK: `https://api.forge.coreweave.com`; run links: `https://forge.coreweave.com/wandb/.../runs/<id>` (see `wandb_run.json`).
 
 Tên run hiện trên W&B, cả hai pipeline dùng một kiểu:
 

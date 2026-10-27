@@ -81,6 +81,12 @@ class FasterRCNNPipeline(BasePipeline):
             self._started = True
             print(f"[faster_rcnn] canonical run_dir: {self.run_dir}", flush=True)
         ctx.main_call(prepare_directory)
+        ctx.main_call(
+            lambda: print(
+                "[faster_rcnn] loading dataset (Kaggle Input + 2 ranks can take several minutes)…",
+                flush=True,
+            )
+        )
         sets, dataset_id = ctx.phase(lambda: load_cache(cfg))
         if len(set(ctx.gather(content_hash(dataset_id)))) != 1:
             raise ValueError("Dataset content differs between ranks")
@@ -130,14 +136,20 @@ class FasterRCNNPipeline(BasePipeline):
             import wandb
             if os.environ.get("WANDB_MODE", "").lower() in {"disabled", "offline", "dryrun"}:
                 raise ValueError("W&B required: offline/disabled mode is not accepted")
+            from vn_tsd.runtime.wandb_urls import wandb_api_base_url, wandb_run_ui_url
+
             project = cfg["project"]
-            wandb.setup(wandb.Settings(base_url=project["wandb_base_url"]))
+            api_base = wandb_api_base_url(project)
+            wandb.setup(wandb.Settings(base_url=api_base))
             run = wandb.init(entity=project["wandb_entity"], project=project["wandb_project"],
                 name=name, config=dict(resolved=cfg, source=source, effective=effective,
                     dataset_class_hash=dataset_id["class_map_sha256"],
                     dataset_split_hashes={s: d["sha256"] for s, d in dataset_id["splits"].items()}),
-                settings=wandb.Settings(base_url=project["wandb_base_url"]), mode="online")
+                settings=wandb.Settings(base_url=api_base), mode="online")
             self._wandb_run = run
+            ui_url = wandb_run_ui_url(project, run.id)
+            write_json({"id": run.id, "url": ui_url, "api_base_url": api_base}, self.run_dir / "wandb_run.json")
+            print(f"[faster_rcnn] W&B: {ui_url}", flush=True)
         ctx.main_call(begin)
         set_seed(cfg["seed"])
         # Validate/init required tracking before any pretrained download or training.

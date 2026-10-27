@@ -158,6 +158,12 @@ class YOLOPipeline(BasePipeline):
             for event, functions in handlers.items():
                 for function in functions:
                     model.add_callback(event, function)
+            if ctx.main:
+                print(
+                    "[yolo26m] Ultralytics train starting "
+                    "(dataset scan / DDP / W&B may take several minutes before epoch 1/)…",
+                    flush=True,
+                )
             if ctx.world > 1:
                 from .trainer import LauncherDetectionTrainer
                 model.train(trainer=LauncherDetectionTrainer, **train_args)
