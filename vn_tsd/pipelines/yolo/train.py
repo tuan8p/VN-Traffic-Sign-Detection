@@ -160,8 +160,11 @@ class YOLOPipeline(BasePipeline):
             for event, functions in handlers.items():
                 for function in functions:
                     model.add_callback(event, function)
-            ctx.handoff()
-            model.train(**train_args)
+            if ctx.world > 1:
+                from .trainer import LauncherDetectionTrainer
+                model.train(trainer=LauncherDetectionTrainer, **train_args)
+            else:
+                model.train(**train_args)
             # Wait for every worker before rank zero copies the checkpoint.
             ctx.phase(lambda: None)
             def finish_run():
