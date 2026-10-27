@@ -103,26 +103,19 @@ def test_group_is_kept_alive_until_context_close(monkeypatch):
     assert dist.destroy_process_group.call_count == 1
 
 
-def test_dataset_preparation_creates_writable_copy(tmp_path, monkeypatch):
+def test_dataset_preparation_creates_writable_copy(tmp_path):
+    from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
     from vn_tsd.utils.io import save_yaml, load_yaml
     source = tmp_path / 'input'
     working = tmp_path / 'working'
-    working.mkdir()
     for split in ('train', 'val', 'test'):
         (source / 'images' / split).mkdir(parents=True)
         (source / 'labels' / split).mkdir(parents=True)
         (source / 'images' / split / 'sample.jpg').write_bytes(b'image')
+        (source / 'labels' / split / 'sample.txt').write_text('0 0.5 0.5 0.1 0.1\n')
     save_yaml({'path': '/old/machine', 'names': ['sign']}, source / 'data.yaml')
-    notebook = json.loads((Path(__file__).resolve().parents[1] / 'notebooks/04_train_yolo26m.ipynb').read_text())
-    code = next(
-        ''.join(c['source'])
-        for c in notebook['cells']
-        if c['cell_type'] == 'code' and 'yolo_dataset_' in ''.join(c['source'])
-    ).replace('working = Path("/kaggle/working")', f'working = Path({str(working)!r})')
-    env = {'PROCESSED_ROOT': str(source), 'Path': Path}
-    exec(compile(code, '<dataset-cell>', 'exec'), env)
-    target = Path(env['PROCESSED_ROOT'])
-    assert not (target / 'images').is_symlink()
+    (source / 'meta.json').write_text('{}', encoding='utf-8')
+    target = prepare_yolo_writable_dataset(source, working)
     assert (target / 'images/train/sample.jpg').read_bytes() == b'image'
     (target / 'labels/train.cache').write_text('new cache')
     assert not (source / 'labels/train.cache').exists()

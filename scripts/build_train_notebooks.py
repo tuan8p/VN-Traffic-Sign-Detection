@@ -161,30 +161,25 @@ else:
     print("W&B disabled for this run (train.require_wandb=False).")'''
 
 YOLO_COPY = r'''from pathlib import Path
-import shutil
-import uuid
-from vn_tsd.utils.io import load_yaml, save_yaml
+import time
+
+from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
 
 source_root = Path(PROCESSED_ROOT).resolve()
 if not (source_root / "data.yaml").is_file():
     raise FileNotFoundError(source_root / "data.yaml")
-for split in ("train", "val", "test"):
-    for kind in ("images", "labels"):
-        if not (source_root / kind / split).is_dir():
-            raise FileNotFoundError(source_root / kind / split)
 
-working = Path("/kaggle/working")
-size = sum(p.stat().st_size for p in source_root.rglob("*") if p.is_file())
-if shutil.disk_usage(working).free < size * 1.2:
-    raise RuntimeError("Not enough space to copy dataset to Working")
+working = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path.cwd() / "working"
+working.mkdir(parents=True, exist_ok=True)
 
-fixed_root = working / f"yolo_dataset_{uuid.uuid4().hex[:8]}"
-shutil.copytree(source_root, fixed_root, ignore=shutil.ignore_patterns("*.cache"))
-data_cfg = load_yaml(fixed_root / "data.yaml")
-data_cfg.update(path=str(fixed_root), train="images/train", val="images/val", test="images/test")
-save_yaml(data_cfg, fixed_root / "data.yaml")
+t0 = time.perf_counter()
+fixed_root = prepare_yolo_writable_dataset(source_root, working)
 PROCESSED_ROOT = str(fixed_root)
-print("Writable dataset copy:", PROCESSED_ROOT)'''
+elapsed = time.perf_counter() - t0
+mode = "reuse" if fixed_root == source_root.resolve() else (
+    "symlink images + labels copy" if str(source_root).startswith("/kaggle/input") else "full copy"
+)
+print(f"Writable dataset ({mode}, {elapsed:.1f}s):", PROCESSED_ROOT)'''
 
 FRCNN_DATA_PREP = r'''# Faster R-CNN đọc cache read-only; không cần copy sang Working.
 from pathlib import Path
@@ -508,7 +503,7 @@ def main() -> None:
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/yolo26m.yaml`.\n",
                     "specific_code": YOLO_SPECIFIC,
-                    "data_prep_md": "## 6) Dataset (YOLO)\n\nCopy **thật** sang `/kaggle/working` (Ultralytics ghi label cache; symlink Input không đủ).\n",
+                    "data_prep_md": "## 6) Dataset (YOLO)\n\nChuẩn bị bản **ghi được** dưới `/kaggle/working`: copy nhãn + `data.yaml`, **symlink ảnh** từ Input (tránh copy hàng GB). Lần sau cùng dataset → tái dùng `yolo_dataset_<hash>`.\n",
                     "data_prep_code": YOLO_COPY,
                 }
             ),
