@@ -237,6 +237,15 @@ class YOLOPipeline(BasePipeline):
             metrics = ctx.phase(finish_run)
             success = True
             return metrics
+        except Exception as exc:
+            if ctx.main:
+                failure = dict(status="failed", pipeline=self.name, error=str(exc))
+                try:
+                    save_json(failure, self.run_dir / "failure.json")
+                    save_json(failure, self.run_dir / "metrics.json")
+                except OSError:
+                    pass
+            raise
         finally:
             try:
                 tracking.finish(success)
