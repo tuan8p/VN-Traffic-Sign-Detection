@@ -16,7 +16,7 @@ if str(repo_root) not in sys.path:
 
 from vn_tsd.config.resolve import resolve_config
 from vn_tsd.runtime.run_dir import make_run_dir, with_run_hash
-from vn_tsd.utils.io import load_yaml
+from vn_tsd.utils.io import load_yaml, save_json
 from vn_tsd.utils.seed import set_seed
 
 
@@ -82,7 +82,17 @@ def main(argv=None) -> None:
         from vn_tsd.pipelines.faster_rcnn.train import FasterRCNNPipeline as P
     else:
         from vn_tsd.pipelines.yolo.train import YOLOPipeline as P
-    metrics = P(cfg, run_dir).fit()
+    try:
+        metrics = P(cfg, run_dir).fit()
+    except Exception as exc:
+        if int(os.environ.get("RANK", "0")) == 0:
+            failure = dict(status="failed", pipeline=args.pipeline, error=str(exc))
+            try:
+                save_json(failure, run_dir / "failure.json")
+                save_json(failure, run_dir / "metrics.json")
+            except OSError:
+                pass
+        raise
     if int(os.environ.get("RANK", "0")) == 0:
         if args.pipeline == "yolo26m":
             from vn_tsd.runtime.post_train import yolo_run_deferred_test
