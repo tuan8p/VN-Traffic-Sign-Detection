@@ -4,10 +4,14 @@ TODO [Team pipeline Faster R-CNN + preprocessing online]: hiện thực evaluate
 trong pipeline của mình, trả dict bốn metric theo eval/metrics.py. Không thêm
 inference/COCOeval ở CLI này. Config đã lưu được dùng nguyên, không merge lại
 .env/YAML hiện tại. Nhánh R-CNN vẫn scaffold và sẽ báo chưa triển khai.
+Mỗi pipeline trả dict bốn metric theo eval/metrics.py. Inference/COCOeval nằm
+trong pipeline, không ở CLI. Config đã lưu được dùng nguyên; nhánh Faster R-CNN
+cho relocation data-root/device tường minh và kiểm cùng test content.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import sys
 from pathlib import Path
 
@@ -28,6 +32,8 @@ def main(argv=None) -> None:
         choices=["faster_rcnn", "yolo26m"],
     )
     parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--data-root", default=None, help="FRCNN only: relocate identical test cache")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default=None, help="FRCNN only: explicit evaluation device")
 
     args = parser.parse_args(argv)
 
@@ -41,6 +47,13 @@ def main(argv=None) -> None:
         )
 
     cfg = load_yaml(config_path)
+    cfg = copy.deepcopy(cfg)
+    if args.pipeline != "faster_rcnn" and (args.data_root is not None or args.device is not None):
+        parser.error("--data-root/--device currently apply to faster_rcnn only")
+    if args.data_root is not None:
+        cfg.setdefault("data", {})["root"] = str(Path(args.data_root).expanduser().resolve())
+    if args.device is not None:
+        cfg.setdefault("runtime_cfg", {})["device"] = args.device
 
     if cfg.get("pipeline") != args.pipeline:
         raise ValueError(
@@ -65,6 +78,7 @@ def main(argv=None) -> None:
     metrics = pipeline.evaluate()
 
     # The Faster R-CNN implementation currently returns a scaffold.
+    # Never write scaffold output as a measured evaluation.
     if metrics.get("status") == "scaffold":
         raise NotImplementedError(
             f"Evaluation cho {args.pipeline} chưa được triển khai."

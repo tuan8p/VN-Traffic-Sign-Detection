@@ -226,8 +226,6 @@ data/processed/**
 !data/processed/.gitkeep
 outputs/**
 !outputs/.gitkeep
-analysis/figures/**
-!analysis/figures/.gitkeep
 wandb/
 runs/
 *.pt
@@ -238,3 +236,6 @@ runs/
 !.env.example
 .venv/
 venv/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
