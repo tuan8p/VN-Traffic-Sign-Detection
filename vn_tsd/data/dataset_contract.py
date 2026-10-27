@@ -7,9 +7,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vn_tsd.utils.io import load_yaml
+from vn_tsd.utils.io import load_yaml, save_yaml
 
 SPLITS = ("train", "val", "test")
+
+
+def _resolve_data_yaml_path_field(raw_path: str, data_yaml: Path) -> Path | None:
+    """Resolve Ultralytics ``path``; return None for stale foreign (e.g. Windows) paths on POSIX."""
+    text = str(raw_path).strip()
+    if not text:
+        return None
+    if len(text) >= 2 and text[1] == ":" and text[0].isalpha():
+        return None
+    declared = Path(text).expanduser()
+    if not declared.is_absolute():
+        declared = (data_yaml.parent / declared).resolve()
+    else:
+        declared = declared.resolve()
+    return declared
 
 
 def validate_processed_dataset(cfg: dict) -> Path:
@@ -28,14 +43,12 @@ def validate_processed_dataset(cfg: dict) -> Path:
     data = load_yaml(data_yaml)
     yaml_path = data.get("path")
     if yaml_path is not None:
-        declared = Path(str(yaml_path)).expanduser()
-        if not declared.is_absolute():
-            declared = (data_yaml.parent / declared).resolve()
-        else:
-            declared = declared.resolve()
-        if declared != root:
-            raise ValueError(
-                f"data.yaml path must point at data.root ({root}), got {declared}"
+        declared = _resolve_data_yaml_path_field(str(yaml_path), data_yaml)
+        if declared is not None and declared != root:
+            # data.root (--data-root) is authoritative; path is often an absolute path from the build machine.
+            print(
+                f"[dataset] data.yaml path ({yaml_path!r}) != data.root ({root}); using data.root",
+                flush=True,
             )
 
     for key in ("nc", "names"):
@@ -62,6 +75,27 @@ def validate_processed_dataset(cfg: dict) -> Path:
 
     _assert_no_cross_split_images(root)
     return root
+
+
+def data_yaml_for_ultralytics(root: Path, staging_dir: Path) -> Path:
+    """Ultralytics reads ``path`` inside data.yaml; patch stale build-machine paths when needed."""
+    root = root.resolve()
+    src = root / "data.yaml"
+    data = load_yaml(src)
+    yaml_path = data.get("path")
+    declared = (
+        _resolve_data_yaml_path_field(str(yaml_path), src)
+        if yaml_path is not None
+        else root
+    )
+    if declared == root:
+        return src
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    out = staging_dir / "data.yaml"
+    patched = dict(data)
+    patched["path"] = root.as_posix()
+    save_yaml(patched, out)
+    return out
 
 
 def _assert_no_cross_split_images(root: Path) -> None:

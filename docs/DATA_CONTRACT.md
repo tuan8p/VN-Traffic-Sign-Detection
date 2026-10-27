@@ -32,7 +32,7 @@ data/processed/
 ### data.yaml format
 
 ```yaml
-path: data/processed
+path: .
 train: images/train
 val: images/val
 test: images/test

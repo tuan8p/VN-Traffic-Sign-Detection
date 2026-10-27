@@ -104,7 +104,7 @@ def _write_data_yaml(out_root: Path, classes: dict[int, str]) -> None:
     """Sinh data.yaml chuẩn Ultralytics YOLO."""
     names_dict = {cid: classes[cid] for cid in sorted(classes.keys())}
     content = [
-        f"path: {out_root.resolve().as_posix()}",
+        "path: .",
         "train: images/train",
         "val: images/val",
         "test: images/test",

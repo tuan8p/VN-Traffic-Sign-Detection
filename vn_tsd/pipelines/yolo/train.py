@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 
-from vn_tsd.data.dataset_contract import validate_processed_dataset
+from vn_tsd.data.dataset_contract import data_yaml_for_ultralytics, validate_processed_dataset
 from vn_tsd.data.preprocess_online import describe_online_preprocess, resolve_online_preprocess
 from vn_tsd.pipelines.base import BasePipeline
 from vn_tsd.utils.io import save_json, save_yaml
@@ -22,7 +22,7 @@ class YOLOPipeline(BasePipeline):
         online = resolve_online_preprocess(cfg)
 
         root = validate_processed_dataset(cfg)
-        data_yaml = root / "data.yaml"
+        data_yaml = data_yaml_for_ultralytics(root, self.run_dir / "ultralytics_data")
 
         if online["hflip"]:
             raise ValueError(
