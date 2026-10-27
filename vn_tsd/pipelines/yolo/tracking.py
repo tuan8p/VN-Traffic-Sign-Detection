@@ -40,18 +40,22 @@ class Tracking:
             raise RuntimeError('Finish the existing W&B run first')
         if os.environ.get('WANDB_MODE', 'online') != 'online':
             raise ValueError('Required W&B tracking needs online mode')
+        from vn_tsd.runtime.wandb_urls import wandb_api_base_url, wandb_run_ui_url
+
         project = self.cfg['project']
+        api_base = wandb_api_base_url(project)
         self.run = wandb.init(
             entity=project['wandb_entity'], project=project['wandb_project'],
             name=self.cfg['train']['run_name'], config=self.cfg,
             dir=str(self.run_dir.resolve()), mode='online',
-            settings=wandb.Settings(base_url=project['wandb_base_url']),
+            settings=wandb.Settings(base_url=api_base),
         )
         self.run.define_metric('epoch')
         for prefix in ('train_loss', 'val_loss', 'lr', 'val/*', 'is_best', 'patience_count'):
             self.run.define_metric(prefix, step_metric='epoch')
-        save_json({'id': self.run.id, 'url': self.run.url}, self.run_dir / 'wandb_run.json')
-        print('W&B training charts:', self.run.url, flush=True)
+        ui_url = wandb_run_ui_url(project, self.run.id)
+        save_json({'id': self.run.id, 'url': ui_url, 'api_base_url': api_base}, self.run_dir / 'wandb_run.json')
+        print('W&B training charts:', ui_url, flush=True)
 
     def mark_epoch(self, trainer):
         if self.main:

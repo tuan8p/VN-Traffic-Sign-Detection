@@ -144,8 +144,13 @@ print("Overrides file  :", OVERRIDES_PATH)'''
 WANDB = r'''import os
 from pathlib import Path
 
-base_url = (cfg.get("project") or {}).get("wandb_base_url") or "https://forge.coreweave.com"
-os.environ["WANDB_BASE_URL"] = base_url
+from vn_tsd.runtime.wandb_urls import wandb_api_base_url, wandb_ui_base_url
+
+project = cfg.get("project") or {}
+api_base = wandb_api_base_url(project)
+os.environ["WANDB_BASE_URL"] = api_base
+print("W&B API (SDK)   :", api_base)
+print("W&B UI (run link):", wandb_ui_base_url(project), "<entity>/<project>/runs/<id>")
 
 if cfg.get("train", {}).get("require_wandb", True):
     if Path("/kaggle/working").exists():
@@ -235,7 +240,13 @@ else:
 
 print(">> ", " ".join(train_cmd))
 print("run_dir (before train):", RUN_DIR)
-proc = subprocess.run(train_cmd, check=False)
+print(
+    "Cell §7: subprocess torchrun — vài phút im lặng là bình thường "
+    "(DDP, quét dataset trên Input, tải weight, W&B) trước dòng epoch 1/…"
+)
+env = os.environ.copy()
+env["PYTHONUNBUFFERED"] = "1"
+proc = subprocess.run(train_cmd, check=False, env=env)
 if proc.returncode != 0:
     import json
 
@@ -465,7 +476,7 @@ def build_nb(meta: dict) -> dict:
             "cell_type": "markdown",
             "metadata": {},
             "source": md_lines(
-                "## 7) Launch train\n\nKaggle: `torchrun` 2 GPU. Output: `outputs/<pipeline>/` trong repo. YOLO: test 1 GPU tự chạy sau DDP (rank 0). Best = val mAP50-95.\n"
+                "## 7) Launch train\n\nKaggle: `torchrun` 2 GPU. **Sau khi chạy cell có thể 5–20 phút** chưa thấy `epoch 1/` — đang khởi tạo 2 process, quét ảnh/nhãn trên `/kaggle/input`, load weight, W&B. Log sẽ hiện dần (`PYTHONUNBUFFERED=1`). YOLO + `cache=False` vẫn quét label lần đầu.\n"
             ),
         }
     )

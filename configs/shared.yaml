@@ -5,6 +5,7 @@ project:
   wandb_entity: HCMUT_IPCV
   wandb_project: BTL
   wandb_base_url: https://api.forge.coreweave.com
+  wandb_ui_base_url: https://forge.coreweave.com/wandb
   # Name shown on W&B for both pipelines.
   # _online only when online preprocess is on, then an 8-char hex so reruns do not collide.
   wandb_run_name: "{pipeline}_s{seed}_ep{epochs}_bs{batch_size}[_online]_{hash8}"
