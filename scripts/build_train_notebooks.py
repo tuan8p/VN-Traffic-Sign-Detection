@@ -170,8 +170,8 @@ import time
 
 from vn_tsd.data.yolo_writable import prepare_yolo_writable_dataset
 
-# Kaggle: mặc định bỏ staging (~0s), đọc Input + cache=False. Local: symlink/staging nếu cần ghi .cache.
-YOLO_SKIP_DATASET_STAGE = Path("/kaggle/working").exists()
+# False = symlink Input → Working vài giây + cache (ổn định DDP). True = 0s nhưng dễ lỗi ghi Input / Broken pipe.
+YOLO_SKIP_DATASET_STAGE = False
 
 source_root = Path(PROCESSED_ROOT).resolve()
 if not (source_root / "data.yaml").is_file():
@@ -242,10 +242,15 @@ print(">> ", " ".join(train_cmd))
 print("run_dir (before train):", RUN_DIR)
 print(
     "Cell §7: subprocess torchrun — vài phút im lặng là bình thường "
-    "(DDP, quét dataset trên Input, tải weight, W&B) trước dòng epoch 1/…"
+    "(DDP, quét dataset, tải weight, W&B) trước dòng epoch 1/…"
+)
+print(
+    "Nếu thấy hàng loạt TCPStore Broken pipe: cuộn LÊN tìm Traceback/RuntimeError "
+    "đầu tiên — đó mới là lỗi gốc; dòng Broken pipe là hậu quả rank thoát sớm."
 )
 env = os.environ.copy()
 env["PYTHONUNBUFFERED"] = "1"
+env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
 proc = subprocess.run(train_cmd, check=False, env=env)
 if proc.returncode != 0:
     import json
@@ -522,7 +527,7 @@ def main() -> None:
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/yolo26m.yaml`.\n",
                     "specific_code": YOLO_SPECIFIC,
-                    "data_prep_md": "## 6) Dataset (YOLO)\n\n**Kaggle (mặc định):** `YOLO_SKIP_DATASET_STAGE=True` — đọc thẳng Input, train `cache=False` (~0s). **Local:** symlink vào `working/` nếu cần ghi `.cache`. Đặt `YOLO_SKIP_DATASET_STAGE=False` trên Kaggle nếu muốn bật label cache (symlink vài giây).\n",
+                    "data_prep_md": "## 6) Dataset (YOLO)\n\n**Mặc định:** symlink `images/` + `labels/` sang Working (vài giây) để Ultralytics ghi `.cache` — tránh crash DDP / `Broken pipe` khi train trực tiếp trên Input read-only. Chỉ bật `YOLO_SKIP_DATASET_STAGE=True` nếu chấp nhận `cache=False` và rủi ro permission.\n",
                     "data_prep_code": YOLO_COPY,
                 }
             ),
