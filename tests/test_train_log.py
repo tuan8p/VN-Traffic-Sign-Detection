@@ -13,6 +13,7 @@ def test_epoch_line_matches_both_pipelines():
 def test_history_row_keys():
     row = history_row(2, 1.0, 0.5, {"mAP50-95": 0.1}, 0.01)
     assert list(row) == ["epoch", "train_loss", "val_loss", "lr", "mAP50-95", "mAP50", "mAP75", "AR100"]
+    assert row["mAP50"] is None
     # Đồng bộ test logger dùng chung theo METRICS_CONTRACT.md ở nhánh yolo:
     assert row["mAP50"] is None # input thiếu mAP50 phải giữ None (JSON null), không giả định đã đo được 0.
 
