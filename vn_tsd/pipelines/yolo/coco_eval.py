@@ -17,13 +17,22 @@ def _device_arg(cfg: dict[str, Any]):
     return device
 
 
-def _predictions_coco(model, dataset, thresholds: dict[str, float | int]) -> list[dict]:
+def _predictions_coco(
+    model,
+    dataset,
+    thresholds: dict[str, float | int],
+    *,
+    batch_size: int = 16,
+    device: Any = 0,
+) -> list[dict]:
     paths = [str(record["path"]) for record in dataset.records]
     if not paths:
         return []
     results = model.predict(
         source=paths,
         imgsz=640,
+        batch=batch_size,
+        device=device,
         conf=thresholds["score_thresh"],
         iou=thresholds["nms_thresh"],
         max_det=thresholds["detections_per_img"],
@@ -55,14 +64,29 @@ def _predictions_coco(model, dataset, thresholds: dict[str, float | int]) -> lis
     return predictions
 
 
-def evaluate_split_coco(cfg: dict[str, Any], checkpoint: Path, split: str = "test") -> dict[str, Any]:
+def evaluate_split_coco(
+    cfg: dict[str, Any],
+    checkpoint: Path,
+    split: str = "test",
+    *,
+    dataset: Any = None,
+) -> dict[str, Any]:
     from ultralytics import YOLO
 
-    sets, _ = load_cache(cfg, splits=(split,))
-    dataset = sets[split]
+    if dataset is None:
+        sets, _ = load_cache(cfg, splits=(split,))
+        dataset = sets[split]
     thresholds = detection_thresholds(cfg)
+    batch_size = int(cfg.get("eval", {}).get("batch_size", 16))
+    device = _device_arg(cfg)
     model = YOLO(str(checkpoint), task="detect")
-    predictions = _predictions_coco(model, dataset, thresholds)
+    predictions = _predictions_coco(
+        model,
+        dataset,
+        thresholds,
+        batch_size=batch_size,
+        device=device,
+    )
     metrics = coco_metrics(dataset.coco_ground_truth(), predictions)
     return dict(
         metrics=metrics,

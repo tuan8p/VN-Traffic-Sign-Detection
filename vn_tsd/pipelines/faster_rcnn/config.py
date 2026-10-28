@@ -7,8 +7,8 @@ from pathlib import Path
 
 WEIGHTS = "FasterRCNN_ResNet50_FPN_Weights.COCO_V1"
 MODEL_DEFAULTS = dict(weights=WEIGHTS, trainable_backbone_layers=5, frozen_bn_eps=0.0,
-                      score_thresh=0.001, nms_thresh=0.5, detections_per_img=12)
-TRAIN_DEFAULTS = dict(scheduler="cosine", warmup_epochs=5, warmup_start_factor=0.001, min_lr=1e-6)
+                      score_thresh=0.001, nms_thresh=0.5, detections_per_img=100)
+TRAIN_DEFAULTS = dict(scheduler="cosine", warmup_epochs=3, warmup_start_factor=0.001, min_lr=1e-6)
 ONLINE_DEFAULTS = dict(mosaic_prob=1.0, mixup_prob=0.1, mixup_alpha=32.0,
                        color_jitter_params=dict(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02))
 HEAD_KEYS = {"head", "head_hidden_dim", "head_dropout"}

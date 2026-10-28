@@ -30,6 +30,7 @@ class Tracking:
         self._patience = int(cfg.get("train", {}).get("early_stopping_patience", 0))
         self._total_epochs = int(cfg.get("train", {}).get("epochs", 1))
         self._stopped_early = False
+        self._val_dataset = None
 
     def start(self):
         if not self.main or not self.cfg['train'].get('require_wandb', False):
@@ -66,7 +67,17 @@ class Tracking:
         if not self.main or epoch not in self.pending:
             return
         self.pending.remove(epoch)
-        val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val")["metrics"]
+        if self._val_dataset is None and isinstance(self.cfg.get("data", {}).get("root"), str) and self.cfg["data"]["root"].strip():
+            try:
+                from vn_tsd.pipelines.faster_rcnn.dataset import load_cache
+                sets, _ = load_cache(self.cfg, splits=("val",))
+                self._val_dataset = sets["val"]
+            except Exception:
+                self._val_dataset = None
+        if self._val_dataset is not None:
+            val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val", dataset=self._val_dataset)["metrics"]
+        else:
+            val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val")["metrics"]
         train_loss = _train_loss(trainer)
         val_loss = _val_loss(trainer)
         lr = _learning_rate(trainer)
