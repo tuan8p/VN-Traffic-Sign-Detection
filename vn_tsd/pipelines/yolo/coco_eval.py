@@ -28,39 +28,47 @@ def _predictions_coco(
     paths = [str(record["path"]) for record in dataset.records]
     if not paths:
         return []
-    results = model.predict(
-        source=paths,
-        imgsz=640,
-        batch=batch_size,
-        device=device,
-        conf=thresholds["score_thresh"],
-        iou=thresholds["nms_thresh"],
-        max_det=thresholds["detections_per_img"],
-        verbose=False,
-    )
-    if len(results) != len(dataset.records):
-        raise ValueError("YOLO prediction count mismatch")
     predictions: list[dict] = []
-    for result, record in zip(results, dataset.records):
-        image_id = int(record["image_id"])
-        if result.boxes is None or len(result.boxes) == 0:
-            continue
-        boxes = result.boxes.xyxy.cpu().tolist()
-        scores = result.boxes.conf.cpu().tolist()
-        labels = result.boxes.cls.cpu().tolist()
-        for box, score, label in zip(boxes, scores, labels):
-            x1, y1, x2, y2 = box
-            cls = int(label)
-            if not 0 <= cls < 52 or not 0.0 <= float(score) <= 1.0 or x2 <= x1 or y2 <= y1:
-                raise ValueError("Invalid YOLO prediction for COCO export")
-            predictions.append(
-                dict(
-                    image_id=image_id,
-                    category_id=cls,
-                    bbox=[float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                    score=float(score),
+    # Chunk paths to avoid Ultralytics LoadPilAndNumpy pre-loading all split images at once
+    # and to guarantee each chunk runs as a true batch of size <= batch_size.
+    step = max(1, int(batch_size))
+    idx = 0
+    for start in range(0, len(paths), step):
+        chunk = paths[start : start + step]
+        results = model.predict(
+            source=chunk,
+            imgsz=640,
+            batch=len(chunk),
+            device=device,
+            conf=thresholds["score_thresh"],
+            iou=thresholds["nms_thresh"],
+            max_det=thresholds["detections_per_img"],
+            verbose=False,
+        )
+        if len(results) != len(chunk):
+            raise ValueError("YOLO prediction count mismatch")
+        for result in results:
+            record = dataset.records[idx]
+            idx += 1
+            image_id = int(record["image_id"])
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
+            boxes = result.boxes.xyxy.cpu().tolist()
+            scores = result.boxes.conf.cpu().tolist()
+            labels = result.boxes.cls.cpu().tolist()
+            for box, score, label in zip(boxes, scores, labels):
+                x1, y1, x2, y2 = box
+                cls = int(label)
+                if not 0 <= cls < 52 or not 0.0 <= float(score) <= 1.0 or x2 <= x1 or y2 <= y1:
+                    raise ValueError("Invalid YOLO prediction for COCO export")
+                predictions.append(
+                    dict(
+                        image_id=image_id,
+                        category_id=cls,
+                        bbox=[float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+                        score=float(score),
+                    )
                 )
-            )
     return predictions
 
 
