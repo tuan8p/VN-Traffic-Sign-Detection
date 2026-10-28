@@ -88,12 +88,21 @@ class YOLOPipeline(BasePipeline):
         return checkpoint_path
 
     def _copy_figures(self) -> None:
-        if not self.run_dir.joinpath("figures").exists():
-            (self.run_dir / "figures").mkdir(parents=True, exist_ok=True)
+        figures_dir = self.run_dir / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
         for filename in ("results.png", "confusion_matrix.png", "confusion_matrix_normalized.png"):
             source = self.run_dir / "train" / filename
             if source.is_file():
-                shutil.copy2(source, self.run_dir / "figures" / filename)
+                shutil.copy2(source, figures_dir / filename)
+        hist = getattr(self, "tracking_history_for_curves", None)
+        if isinstance(hist, list) and hist and isinstance(hist[0], dict):
+            from vn_tsd.pipelines.faster_rcnn.artifacts import curves
+
+            curves(hist, figures_dir)
+            # Keep Ultralytics native 10-panel results.png if present
+            source_results = self.run_dir / "train" / "results.png"
+            if source_results.is_file():
+                shutil.copy2(source_results, figures_dir / "results.png")
 
     def fit(
         self, *, callbacks: dict[str, list[Callable]] | None = None
@@ -185,6 +194,7 @@ class YOLOPipeline(BasePipeline):
                     else:
                         test_metrics = res
                 checkpoint = self._save_checkpoint(model)
+                self.tracking_history_for_curves = getattr(tracking, "history", None)
                 self._copy_figures()
                 best_epoch = tracking.best_epoch
                 if best_epoch is None:

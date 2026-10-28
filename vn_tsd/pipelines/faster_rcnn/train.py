@@ -50,7 +50,7 @@ class FasterRCNNPipeline(BasePipeline):
         from vn_tsd.runtime.run_dir import with_run_hash
         from vn_tsd.runtime.train_log import history_row, log_epoch, log_early_stop, wandb_epoch_payload
         from vn_tsd.utils.seed import set_seed
-        from .artifacts import write_json, provenance, curves, example_ids, overlays
+        from .artifacts import write_json, provenance, curves, confusion_matrices, example_ids, overlays
         from .config import validate_config
         from .dataset import load_cache, content_hash, file_hash, collate_detection
         from .distributed import eval_indices
@@ -215,6 +215,9 @@ class FasterRCNNPipeline(BasePipeline):
         test_metrics, predictions = None, []
         if cfg["eval"].get("auto_eval_test", True):
             test_metrics, predictions = distributed_evaluate(model, sets["test"], test_loader, ctx)
+            val_preds = predictions
+        else:
+            _, val_preds = distributed_evaluate(model, sets["val"], val_loader, ctx)
         def finish():
             checkpoint_hash = file_hash(checkpoint)
             metrics = dict(status="completed", pipeline=self.name, run_dir=str(self.run_dir), best_epoch=best.epoch,
@@ -224,6 +227,8 @@ class FasterRCNNPipeline(BasePipeline):
                 config_sha256=content_hash(cfg), dataset_split_hashes={s: d["sha256"] for s, d in dataset_id["splits"].items()},
                 seed=cfg["seed"], effective=effective, test_used_for_selection=False, supports_training_resume=False)
             curves(history, self.run_dir/"figures")
+            cm_dataset = sets["test"] if test_metrics is not None else sets["val"]
+            confusion_matrices(cm_dataset, val_preds, self.run_dir/"figures")
             if test_metrics is not None:
                 write_json(dict(pipeline=self.name, split="test", data_root=cfg["data"]["root"], metrics=test_metrics),
                            self.run_dir/"test_metrics.json")
@@ -234,8 +239,19 @@ class FasterRCNNPipeline(BasePipeline):
                 zip_run_dir(self.run_dir)
             run = getattr(self, "_wandb_run", None)
             if run is not None:
+                import wandb
+                fig_payload = {}
+                if hasattr(wandb, "Image"):
+                    for filename in ("results.png", "confusion_matrix.png", "confusion_matrix_normalized.png"):
+                        fpath = self.run_dir / "figures" / filename
+                        if fpath.is_file():
+                            fig_payload[f"figures/{fpath.stem}"] = wandb.Image(str(fpath))
                 if test_metrics is not None:
-                    run.log({f"test/{k}": v for k, v in test_metrics.items()}, step=len(history)+1)
+                    payload = {f"test/{k}": v for k, v in test_metrics.items()}
+                    payload.update(fig_payload)
+                    run.log(payload, step=len(history)+1)
+                elif fig_payload:
+                    run.log(fig_payload, step=len(history)+1)
                 self._wandb_finished = True
                 run.finish()
             return metrics
