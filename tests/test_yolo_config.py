@@ -20,6 +20,8 @@ def resolved():
 @pytest.mark.parametrize("section,key,value", [
     ("metrics", "primary", "mAP50"),
     ("train", "primary_metric", "mAP50"),
+    ("train", "optimizer", "SGD"),
+    ("train", "optimizer", "auto"),
     ("model", "weights", "yolo11n.pt"),
     ("model", "imgsz", 512),
 ])
@@ -34,4 +36,9 @@ def test_yolo_config_sets_coco_threshold_defaults():
     cfg = resolved()
     validated = validate_config(cfg)
     assert validated["model"]["score_thresh"] == 0.001
-    assert validated["model"]["detections_per_img"] == 12
+    assert validated["model"]["detections_per_img"] == 100
+    # Explicit AdamW (not Ultralytics auto, which ignores lr0/momentum).
+    assert validated["train"]["optimizer"] == "AdamW"
+    assert validated["train"]["lr0"] == 0.0002
+    assert validated["train"]["momentum"] == 0.9
+    assert validated["online_preprocess"]["enabled"] is True

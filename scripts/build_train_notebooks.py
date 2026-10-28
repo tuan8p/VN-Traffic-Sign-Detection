@@ -251,11 +251,12 @@ print(
 env = os.environ.copy()
 env["PYTHONUNBUFFERED"] = "1"
 env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
-proc = subprocess.run(train_cmd, check=False, env=env)
-if proc.returncode != 0:
+try:
+    subprocess.run(train_cmd, check=True, env=env)
+except subprocess.CalledProcessError as exc:
     import json
 
-    print("\n=== torchrun failed (exit", proc.returncode, ") ===")
+    print("\n=== torchrun failed (exit", exc.returncode, ") ===")
     print("Scroll up in this cell for rank-0 traceback (CUDA OOM, W&B, ValueError, …).")
     detail_parts: list[str] = []
     failure = RUN_DIR / "failure.json"
@@ -277,9 +278,9 @@ if proc.returncode != 0:
         except json.JSONDecodeError:
             pass
     msg = detail_parts[0] if detail_parts else (
-        f"Training exited with code {proc.returncode}. See traceback above in this cell output."
+        f"Training exited with code {exc.returncode}. See traceback above in this cell output."
     )
-    raise RuntimeError(msg)
+    raise RuntimeError(msg) from exc
 
 print("run_dir:", RUN_DIR)
 print("wandb:", RUN_DIR / "wandb_run.json")
@@ -298,20 +299,20 @@ NOTEBOOK_PIPELINE = {
         "frozen_bn_eps": 0.0,
         "score_thresh": 0.001,
         "nms_thresh": 0.5,
-        "detections_per_img": 12,
+        "detections_per_img": 100,
     },
     "train": {
         "epochs": 100,
-        "lr": 0.005,
+        "lr": 0.002,
         "momentum": 0.9,
         "weight_decay": 0.0005,
         "scheduler": "cosine",
-        "warmup_epochs": 5,
+        "warmup_epochs": 3,
         "warmup_start_factor": 0.001,
         "min_lr": 0.000001,
     },
     "online_preprocess": {
-        "enabled": False,
+        "enabled": True,
         "letterbox": True,
         "normalize": True,
         "hflip": False,
@@ -347,20 +348,21 @@ NOTEBOOK_PIPELINE = {
     "model": {
         "score_thresh": 0.001,
         "nms_thresh": 0.5,
-        "detections_per_img": 12,
+        "detections_per_img": 100,
     },
     "train": {
         "epochs": 100,
-        "lr0": 0.01,
-        "momentum": 0.937,
+        "optimizer": "AdamW",
+        "lr0": 0.0002,
+        "momentum": 0.9,
         "weight_decay": 0.0005,
         "lrf": 0.01,
-        "warmup_epochs": 5.0,
+        "warmup_epochs": 3.0,
         "cos_lr": True,
         "close_mosaic": 10,
     },
     "online_preprocess": {
-        "enabled": False,
+        "enabled": True,
         "letterbox": True,
         "normalize": True,
         "hflip": False,
@@ -503,7 +505,7 @@ def main() -> None:
             build_nb(
                 {
                     "title_md": "# 03 — Train Faster R-CNN ResNet-50\n\nTorchvision Faster R-CNN ResNet-50, 52 lớp. Best = val mAP50-95 (COCOeval). Test một lần sau best.\n",
-                    "repo_branch": "faster-rcnn",
+                    "repo_branch": "main",
                     "pipeline": "faster_rcnn",
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/faster_rcnn.yaml`.\n",
@@ -522,7 +524,7 @@ def main() -> None:
             build_nb(
                 {
                     "title_md": "# 04 — Train YOLO26m\n\nUltralytics YOLO26m, 52 lớp. Best = val mAP50-95 (COCOeval). Test (nếu bật) qua `tools.run_eval` sau DDP.\n",
-                    "repo_branch": "yolo",
+                    "repo_branch": "main",
                     "pipeline": "yolo26m",
                     "notebook_shared": NOTEBOOK_SHARED,
                     "specific_md": "Dict `NOTEBOOK_PIPELINE` mirror `configs/pipelines/yolo26m.yaml`.\n",

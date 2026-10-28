@@ -67,6 +67,9 @@ def test_online_on_applies_flags(pipeline):
     assert args["hsv_s"] == 0.0
     assert args["translate"] == 0.2
     assert args["scale"] == 0.2
+    assert args["optimizer"] == "AdamW"
+    assert args["lr0"] == 0.0002
+    assert args["momentum"] == 0.9
 
 
 def test_missing_data_root(pipeline):
@@ -125,7 +128,7 @@ def test_fit_saves_test_metrics(pipeline, tmp_path):
     ):
         metrics = pipeline.fit()
 
-    evaluate.assert_called_once_with()
+    evaluate.assert_called_once_with(detailed=True)
     assert metrics["status"] == "completed"
     assert metrics["test"] == test_metrics
 
@@ -169,7 +172,7 @@ def test_ddp_worker_only_trains(pipeline, monkeypatch):
          patch.object(pipeline, '_save_checkpoint') as save:
         result = pipeline.fit()
     model.train.assert_called_once()
-    assert model.train.call_args.kwargs['batch'] == 8
+    assert model.train.call_args.kwargs['batch'] == pipeline.cfg['train']['batch_size']
     assert model.train.call_args.kwargs['device'] == [0, 1]
     evaluate.assert_not_called()
     save.assert_not_called()

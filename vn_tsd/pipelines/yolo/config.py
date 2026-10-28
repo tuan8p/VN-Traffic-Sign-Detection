@@ -11,15 +11,16 @@ MODEL_DEFAULTS = dict(
     imgsz=640,
     score_thresh=0.001,
     nms_thresh=0.5,
-    detections_per_img=12,
+    detections_per_img=100,
 )
 
 TRAIN_DEFAULTS = dict(
-    lr0=0.01,
-    momentum=0.937,
+    optimizer="AdamW",
+    lr0=0.0002,
+    momentum=0.9,
     weight_decay=0.0005,
     lrf=0.01,
-    warmup_epochs=5.0,
+    warmup_epochs=3.0,
     cos_lr=True,
     close_mosaic=10,
 )
@@ -46,7 +47,7 @@ def validate_config(cfg: dict) -> dict:
     allowed_train = {
         "epochs", "lr0", "batch_size", "amp", "require_wandb",
         "early_stopping_patience", "run_name", "primary_metric",
-        "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic",
+        "optimizer", "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic",
     }
     if set(model) - allowed_model:
         raise ValueError(f"Unknown model keys: {sorted(set(model) - allowed_model)}")
@@ -70,6 +71,8 @@ def validate_config(cfg: dict) -> dict:
         raise ValueError("Final evaluation must use test split")
     if train.get("primary_metric", "mAP50-95") != "mAP50-95" or c.get("metrics", {}).get("primary") != "mAP50-95":
         raise ValueError("Best must be selected by validation mAP50-95")
+    if train.get("optimizer") != "AdamW":
+        raise ValueError("train.optimizer must be AdamW (explicit, not Ultralytics auto)")
     _number(train["lr0"], "train.lr0", 0)
     _number(train["momentum"], "train.momentum", 0, 1)
     _number(train["weight_decay"], "train.weight_decay", 0)

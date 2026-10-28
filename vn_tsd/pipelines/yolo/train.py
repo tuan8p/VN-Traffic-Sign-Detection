@@ -46,6 +46,7 @@ class YOLOPipeline(BasePipeline):
             "epochs": train_cfg["epochs"],
             "batch": train_cfg["batch_size"],
             "imgsz": model_cfg["imgsz"],
+            "optimizer": train_cfg.get("optimizer", "AdamW"),
             "lr0": train_cfg["lr0"],
             "momentum": train_cfg["momentum"],
             "weight_decay": train_cfg["weight_decay"],
@@ -143,10 +144,10 @@ class YOLOPipeline(BasePipeline):
                 tracking.start()
 
             ctx.phase(prepare)
-            model = ctx.phase(lambda: build_yolo26m(self.cfg) if ctx.main else None)
-            other = ctx.phase(lambda: build_yolo26m(self.cfg) if not ctx.main else None)
-            if not ctx.main:
-                model = other
+            # Both ranks must import ultralytics and build the model in the same phase
+            # because Ultralytics SettingsManager uses torch_distributed_zero_first(LOCAL_RANK)
+            # on first import when torch.distributed is initialized.
+            model = ctx.phase(lambda: build_yolo26m(self.cfg))
             handlers = {
                 "on_pretrain_routine_start": [remove_native_wandb],
                 "on_train_epoch_end": [tracking.mark_epoch],
@@ -174,12 +175,16 @@ class YOLOPipeline(BasePipeline):
             def finish_run():
                 if not ctx.main:
                     return {"status": "worker_finished", "pipeline": self.name}
-                checkpoint = self._save_checkpoint(model)
                 test_metrics = None
                 test_payload = None
                 if self.cfg.get("eval", {}).get("auto_eval_test", True) and not defer_test:
-                    test_payload = self.evaluate(detailed=True)
-                    test_metrics = test_payload["metrics"]
+                    res = self.evaluate(detailed=True)
+                    if isinstance(res, dict) and "metrics" in res:
+                        test_payload = res
+                        test_metrics = res["metrics"]
+                    else:
+                        test_metrics = res
+                checkpoint = self._save_checkpoint(model)
                 self._copy_figures()
                 best_epoch = tracking.best_epoch
                 if best_epoch is None:

@@ -12,21 +12,24 @@ model:
   # Match Faster R-CNN COCOeval postprocess for comparable test metrics.
   score_thresh: 0.001
   nms_thresh: 0.5
-  detections_per_img: 12
+  detections_per_img: 100
 
 train:
   epochs: 100
-  lr0: 0.01
-  momentum: 0.937
+  # Explicit AdamW: Ultralytics optimizer=auto ignores lr0/momentum and picked
+  # AdamW lr~0.000179 internally. lr0 below is the AdamW-scale LR, not SGD 0.01.
+  optimizer: AdamW
+  lr0: 0.0002
+  momentum: 0.9
   weight_decay: 0.0005
   lrf: 0.01
-  warmup_epochs: 5.0
+  warmup_epochs: 3.0
   cos_lr: true
   close_mosaic: 10
   primary_metric: mAP50-95
 
 online_preprocess:
-  enabled: false
+  enabled: true
   letterbox: true
   normalize: true
   hflip: false

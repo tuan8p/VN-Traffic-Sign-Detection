@@ -20,21 +20,21 @@ model:
   frozen_bn_eps: 0.0
   score_thresh: 0.001
   nms_thresh: 0.5
-  detections_per_img: 12
+  detections_per_img: 100
 
 train:
   epochs: 100
-  lr: 0.005
+  lr: 0.002
   momentum: 0.9
   weight_decay: 0.0005
   primary_metric: mAP50-95
   scheduler: cosine
-  warmup_epochs: 5
+  warmup_epochs: 3
   warmup_start_factor: 0.001
   min_lr: 0.000001
 
 online_preprocess:
-  enabled: false
+  enabled: true
   letterbox: true
   normalize: true
   hflip: false

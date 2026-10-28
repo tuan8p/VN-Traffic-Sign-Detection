@@ -63,7 +63,7 @@ def test_rounding_tolerance_does_not_filter_boxes(tmp_path):
 def test_master_gate_and_train_only_extra_images(tmp_path):
     root = make_cache(tmp_path/"cache")
     cfg = config(root)
-    cfg["online_preprocess"].update(hflip=True, mosaic=True, mixup=True)
+    cfg["online_preprocess"].update(enabled=False, hflip=True, mosaic=True, mixup=True)
     cfg = validate_config(cfg)  # raw hflip ignored while master OFF
     sets, _ = load_cache(cfg)
     baseline = sets["train"].raw(0)

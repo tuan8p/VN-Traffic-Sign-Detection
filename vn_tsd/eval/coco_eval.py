@@ -9,7 +9,7 @@ from typing import Any
 
 from vn_tsd.eval.metrics import summarize
 
-DEFAULT_THRESHOLDS = dict(score_thresh=0.001, nms_thresh=0.5, detections_per_img=12)
+DEFAULT_THRESHOLDS = dict(score_thresh=0.001, nms_thresh=0.5, detections_per_img=100)
 
 
 def detection_thresholds(cfg: dict[str, Any]) -> dict[str, float | int]:
@@ -50,9 +50,13 @@ def coco_metrics(ground_truth: dict, predictions: list[dict]) -> dict:
 
 def evaluator_metadata(cfg: dict[str, Any]) -> dict[str, Any]:
     thresholds = detection_thresholds(cfg)
+    try:
+        version = importlib.metadata.version("pycocotools")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
     return dict(
         evaluator="pycocotools.COCOeval bbox",
-        version=importlib.metadata.version("pycocotools"),
+        version=version,
         iou="0.50:0.05:0.95",
         area="all",
         maxDets=[1, 10, 100],
