@@ -12,6 +12,11 @@ from vn_tsd.utils.io import save_json
 
 
 def remove_native_wandb(trainer):
+    try:
+        from ultralytics.utils import SETTINGS
+        SETTINGS["wandb"] = False
+    except Exception:
+        pass
     for event, handlers in trainer.callbacks.items():
         trainer.callbacks[event] = [fn for fn in handlers
             if fn.__module__ != 'ultralytics.utils.callbacks.wb']
