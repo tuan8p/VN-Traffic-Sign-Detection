@@ -229,15 +229,15 @@ class FasterRCNNPipeline(BasePipeline):
                            self.run_dir/"test_metrics.json")
                 write_json(predictions, self.run_dir/"predictions_test.json")
                 overlays(sets["test"], predictions, test_ids, self.run_dir/"figures/test", checkpoint_hash)
+            write_json(metrics, self.run_dir/"metrics.json")
+            if cfg["outputs"].get("zip_after_train", True):
+                zip_run_dir(self.run_dir)
             run = getattr(self, "_wandb_run", None)
             if run is not None:
                 if test_metrics is not None:
                     run.log({f"test/{k}": v for k, v in test_metrics.items()}, step=len(history)+1)
                 self._wandb_finished = True
                 run.finish()
-            write_json(metrics, self.run_dir/"metrics.json")
-            if cfg["outputs"].get("zip_after_train", True):
-                zip_run_dir(self.run_dir)
             return metrics
         return ctx.main_call(finish)
 

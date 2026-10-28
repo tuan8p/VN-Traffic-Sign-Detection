@@ -25,15 +25,19 @@ def test_yolo_run_deferred_test_runs_eval_and_rezip(tmp_path, monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "2")
     calls = []
 
-    def fake_run(cmd, check):
-        calls.append(cmd)
+    def fake_run(cmd, check, env=None):
+        calls.append((cmd, env))
         assert check is True
+        if env is not None:
+            assert "WORLD_SIZE" not in env
+            assert "RANK" not in env
+            assert "LOCAL_RANK" not in env
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr("vn_tsd.runtime.post_train.zip_run_dir", lambda rd: rd / "run.zip")
 
     assert yolo_run_deferred_test(cfg, run_dir) is True
-    assert "tools.run_eval" in calls[0]
+    assert "tools.run_eval" in calls[0][0]
     metrics = json.loads((run_dir / "metrics.json").read_text())
     assert metrics["test_status"] == "completed"
     assert metrics["test"]["mAP50-95"] == 0.1
