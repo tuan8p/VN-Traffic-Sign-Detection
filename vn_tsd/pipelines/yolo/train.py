@@ -243,9 +243,10 @@ class YOLOPipeline(BasePipeline):
                         path = self.run_dir / "figures" / filename
                         if path.is_file():
                             tracking.run.log({f"figures/{path.stem}": wandb.Image(str(path))})
-                tracking.finish(True)
                 if self.cfg.get("outputs", {}).get("zip_after_train", True) and not defer_test:
                     zip_run_dir(self.run_dir)
+                if not defer_test:
+                    tracking.finish(True)
                 return metrics
 
             metrics = ctx.phase(finish_run)
@@ -262,7 +263,8 @@ class YOLOPipeline(BasePipeline):
             raise
         finally:
             try:
-                tracking.finish(success)
+                if not (success and defer_test):
+                    tracking.finish(success)
             finally:
                 ctx.close()
 
@@ -282,6 +284,8 @@ class YOLOPipeline(BasePipeline):
             )
 
         coco = evaluate_split_coco(cfg, checkpoint, "test")
+        if "predictions" in coco:
+            save_json(coco["predictions"], self.run_dir / "predictions_test.json")
         if not detailed:
             return coco["metrics"]
         native = evaluate_split_native(cfg, checkpoint, "test", self.run_dir)
