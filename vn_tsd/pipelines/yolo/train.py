@@ -57,7 +57,6 @@ class YOLOPipeline(BasePipeline):
             "seed": cfg["seed"],
             # Early stopping by val mAP50-95 is enforced in Tracking, not Ultralytics fitness.
             "patience": 0,
-            "eval_batch_size": cfg["eval"]["batch_size"],
             "amp": train_cfg["amp"],
             "workers": runtime_cfg.get("num_workers", 2),
 
@@ -167,6 +166,7 @@ class YOLOPipeline(BasePipeline):
                 )
             if ctx.world > 1:
                 from .trainer import LauncherDetectionTrainer
+                LauncherDetectionTrainer.eval_batch_size = int(self.cfg["eval"]["batch_size"])
                 model.train(trainer=LauncherDetectionTrainer, **train_args)
             else:
                 model.train(**train_args)

@@ -70,6 +70,7 @@ def test_online_on_applies_flags(pipeline):
     assert args["optimizer"] == "AdamW"
     assert args["lr0"] == 0.0002
     assert args["momentum"] == 0.9
+    assert "eval_batch_size" not in args
 
 
 def test_missing_data_root(pipeline):
