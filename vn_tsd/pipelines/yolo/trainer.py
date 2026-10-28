@@ -13,6 +13,8 @@ except ImportError:  # pragma: no cover - allows unit testing without ultralytic
 
 
 class LauncherDetectionTrainer(DetectionTrainer):
+    eval_batch_size: int | None = None
+
     def _setup_ddp(self, world_size=None):
         if not dist.is_initialized():
             raise RuntimeError('Launcher DDP process group must be initialized before training')
@@ -30,6 +32,8 @@ class LauncherDetectionTrainer(DetectionTrainer):
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
         if mode == "val":
-            batch_size = int(getattr(self.args, "eval_batch_size", batch_size))
+            custom = getattr(self, "eval_batch_size", None) or getattr(self.args, "eval_batch_size", None)
+            if custom is not None:
+                batch_size = int(custom)
         return super().get_dataloader(dataset_path, batch_size, rank, mode)
 
