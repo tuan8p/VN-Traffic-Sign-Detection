@@ -40,7 +40,9 @@ def test_fit_best_artifacts_wandb_once_and_offline_eval(tmp_path, monkeypatch):
     assert len([e for e in events if e[0] == "log"]) == 3  # 2 val epochs + final test
     assert metrics["effective"]["amp"] is False
     for name in ("resolved_config.yaml", "history.json", "metrics.json", "test_metrics.json", "run.zip",
-                 "figures/loss.png", "figures/test/examples.json", "checkpoints/checkpoint_best.pt"):
+                 "figures/loss.png", "figures/lr.png", "figures/val_metrics.png", "figures/results.png",
+                 "figures/confusion_matrix.png", "figures/confusion_matrix_normalized.png",
+                 "figures/test/examples.json", "checkpoints/checkpoint_best.pt"):
         assert (run/name).is_file(), name
     meta = model_module.read_checkpoint(run/"checkpoints/checkpoint_best.pt")["metadata"]
     history = json.loads((run/"history.json").read_text())
