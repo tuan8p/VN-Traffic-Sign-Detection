@@ -22,7 +22,7 @@ class FasterRCNNPipeline(BasePipeline):
         except Exception as exc:
             # A controlled failure is reported without marking an unfinished run completed.
             # Hard worker/NCCL failures are handled by torchrun's worker supervision.
-            if ctx.main:
+            if ctx.main and getattr(self, "_started", False):
                 from .artifacts import write_json
                 try:
                     failure = dict(status="failed", pipeline=self.name, error=str(exc))
@@ -74,7 +74,8 @@ class FasterRCNNPipeline(BasePipeline):
         self.cfg, self.run_dir = cfg, Path(path)
         cfg["data"]["root"] = str(Path(cfg["data"]["root"]).expanduser().resolve())
         def prepare_directory():
-            if (self.run_dir/"resolved_config.yaml").exists() or (self.run_dir/"checkpoints/checkpoint_best.pt").exists():
+            if any((self.run_dir/item).exists() for item in
+                   ("resolved_config.yaml", "metrics.json", "checkpoints/checkpoint_best.pt")):
                 raise FileExistsError("Run already has training artifacts; v1 does not resume/overwrite runs")
             for sub in ("logs", "figures", "checkpoints"):
                 (self.run_dir/sub).mkdir(parents=True, exist_ok=True)
@@ -188,6 +189,12 @@ class FasterRCNNPipeline(BasePipeline):
             row = history_row(
                 epoch, training["loss"], sum(val_components.values()), val_metrics, training["lr"],
                 is_best=improved, patience_count=best.bad,
+            )
+            row.update(
+                train_components=training["components"], val_components=val_components,
+                seconds=time.monotonic()-start,
+                successful_updates=training["successful_updates"],
+                amp_skipped_updates=training["amp_skipped_updates"],
             )
             history.append(row)
             def end_epoch():

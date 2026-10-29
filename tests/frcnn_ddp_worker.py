@@ -30,6 +30,7 @@ def worker(rank, work):
         else:
             raise AssertionError("phase failure did not propagate")
         class Run:
+            id = "fixture-ddp-run"
             def log(self, values, step):
                 with (work/f"wandb_rank{rank}.txt").open("a") as f: f.write(f"log:{step}\n")
             def finish(self, **kw):

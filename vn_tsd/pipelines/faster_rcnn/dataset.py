@@ -138,7 +138,18 @@ class ProcessedDataset:
 
 def load_cache(cfg, splits=("train", "val", "test"), saved_names=None):
     from vn_tsd.data.dataset_contract import validate_processed_dataset
-    root = validate_processed_dataset(cfg)
+    if tuple(splits) == ("test",) and saved_names is not None:
+        # Inference exports may contain only test plus metadata. Training still
+        # uses the shared all-split validator; no changes to the offline cache.
+        raw_root = cfg.get("data", {}).get("root")
+        if not isinstance(raw_root, str) or not raw_root.strip():
+            raise ValueError("data.root is required")
+        root = Path(raw_root).expanduser().resolve()
+        declared = load_yaml(root/"data.yaml").get("test")
+        if not isinstance(declared, str) or (root/declared).resolve() != (root/"images/test").resolve():
+            raise ValueError("data.yaml test must point to images/test under data.root")
+    else:
+        root = validate_processed_dataset(cfg)
     data = load_yaml(root/"data.yaml")
     meta_path = root/"meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))

@@ -17,6 +17,7 @@ def test_fit_best_artifacts_wandb_once_and_offline_eval(tmp_path, monkeypatch):
     import wandb
     events = []
     class Run:
+        id = "fixture-run"
         def log(self, row, step): events.append(("log", step))
         def finish(self, **kw): events.append(("finish", kw))
     def init(**kw):
@@ -47,6 +48,8 @@ def test_fit_best_artifacts_wandb_once_and_offline_eval(tmp_path, monkeypatch):
     meta = model_module.read_checkpoint(run/"checkpoints/checkpoint_best.pt")["metadata"]
     history = json.loads((run/"history.json").read_text())
     assert meta["best_epoch"] == 1 and history[1]["is_best"] is False
+    assert all(row["successful_updates"] > 0 and row["seconds"] >= 0 for row in history)
+    assert all(set(row["train_components"]) == set(row["val_components"]) for row in history)
     assert meta["supports_training_resume"] is False
     # fit loaded epoch-1 checkpoint, not the final epoch's parameters.
     assert len(history) == 2 and history[1]["train_loss"] < history[0]["train_loss"]
@@ -77,6 +80,25 @@ def test_fit_best_artifacts_wandb_once_and_offline_eval(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="does not resume"):
         pipe.fit()
     assert (run/"metrics.json").read_bytes() == metrics_before
+    assert not (run/"failure.json").exists()
+
+
+def test_cli_rejected_reuse_preserves_completed_evidence(tmp_path):
+    from tools.run_train import main
+    run = tmp_path/"completed"
+    run.mkdir()
+    contents = {
+        "resolved_config.yaml": "previous: config\n",
+        "metrics.json": '{"status":"completed"}\n',
+        "history.json": '[{"epoch":16}]\n',
+    }
+    for name, text in contents.items():
+        (run/name).write_text(text, encoding="utf-8")
+    original = {name: (run/name).read_bytes() for name in contents}
+    with pytest.raises(RuntimeError, match="does not resume"):
+        main(["--pipeline", "faster_rcnn", "--run-dir", str(run),
+              "--data-root", str(tmp_path/"unused"), "--runtime", "configs/runtime/local.yaml"])
+    assert all((run/name).read_bytes() == value for name, value in original.items())
     assert not (run/"failure.json").exists()
 
 

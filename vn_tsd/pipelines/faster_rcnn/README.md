@@ -136,7 +136,8 @@ Training DistributedSampler có thể padding sample khi N không chia hết wor
 Val/test shard không pad/drop; unwrapped model forward, gather predictions một lần sau shard và rank0 COCOeval.
 Rank0 chọn best strict val mAP50-95 tăng; score0 vẫn lưu checkpoint đầu, tie không overwrite, stop đúng patience.
 
-Scheduler SGD: warmup1epoch từ factor cấu hình rồi cosine; step theo optimizer updates thành công.
+Scheduler SGD: warmup theo train.warmup_epochs từ factor cấu hình rồi cosine; step theo optimizer updates thành công.
+Nếu ngân sách smoke ngắn hơn hoặc bằng warmup, toàn run chỉ warmup (giới hạn warmup bằng số epoch của run).
 AMP skipped steps không tăng scheduler; epoch không update nào là lỗi. History LR là LR thực dùng ở update cuối,
 không phải next-state. Sau đủ nominal successful updates scheduler next-state đạt min_lr.
 Local không tự giảm batch nhóm; Kaggle cần preflight thật để biết batch chung có vừa VRAM.

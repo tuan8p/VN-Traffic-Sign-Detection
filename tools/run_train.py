@@ -82,10 +82,16 @@ def main(argv=None) -> None:
         from vn_tsd.pipelines.faster_rcnn.train import FasterRCNNPipeline as P
     else:
         from vn_tsd.pipelines.yolo.train import YOLOPipeline as P
+    # FRCNN rejects reuse of a run directory. Its completed evidence must also
+    # survive this outer CLI error handler; YOLO retains its existing policy.
+    preserve_frcnn_run = args.pipeline == "faster_rcnn" and any(
+        (run_dir / name).exists()
+        for name in ("resolved_config.yaml", "metrics.json", "checkpoints/checkpoint_best.pt")
+    )
     try:
         metrics = P(cfg, run_dir).fit()
     except Exception as exc:
-        if int(os.environ.get("RANK", "0")) == 0:
+        if int(os.environ.get("RANK", "0")) == 0 and not preserve_frcnn_run:
             failure = dict(status="failed", pipeline=args.pipeline, error=str(exc))
             try:
                 save_json(failure, run_dir / "failure.json")
