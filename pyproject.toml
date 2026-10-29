@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-detect = ["torch>=2.1", "torchvision>=0.16", "ultralytics>=8.4.182", "wandb>=0.19"]
+detect = ["torch>=2.1", "torchvision>=0.16", "ultralytics>=8.4.182", "wandb>=0.19", "pycocotools>=2.0.7,<3"]
 demo = ["streamlit>=1.28"]
 dev = ["pytest>=7.4"]
 all = ["vn-tsd[detect,demo,dev]"]
