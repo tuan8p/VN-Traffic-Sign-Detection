@@ -237,5 +237,8 @@ runs/
 .venv/
 venv/
 # pixi environments
-.pixi/*
+.pixi
 !.pixi/config.toml
+
+# vscode
+.vscode

@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-def worker(rank, work):
+def worker(rank, work, sweep_mode=False):
     import torch
     import torch.distributed as dist
     from types import SimpleNamespace
@@ -31,8 +31,14 @@ def worker(rank, work):
             raise AssertionError("phase failure did not propagate")
         class Run:
             id = "fixture-ddp-run"
+            sweep_id = "fixture-sweep"
+            summary = {}
+            config = {"train.lr": .00073, "train.weight_decay": .000031,
+                      "model.head_dropout": .4, "online_preprocess.jitter": .05}
             def log(self, values, step):
                 with (work/f"wandb_rank{rank}.txt").open("a") as f: f.write(f"log:{step}\n")
+                if "sweep/best_val_map" in values:
+                    (work/"objective.json").write_text(json.dumps(values))
             def finish(self, **kw):
                 with (work/f"wandb_rank{rank}.txt").open("a") as f: f.write("finish\n")
         def init(**kw):
@@ -42,6 +48,21 @@ def worker(rank, work):
         model_module.build_faster_rcnn = lambda *a, **kw: tiny_model()
         cfg = config(work/"cache", run_name=f"rank_{rank}")
         cfg["train"]["require_wandb"] = True
+        if sweep_mode:
+            from vn_tsd.pipelines.faster_rcnn.sweep import apply_parameters
+            from vn_tsd.pipelines.faster_rcnn.dataset import load_cache, content_hash
+            os.environ.update(WANDB_SWEEP_ID="fixture-sweep", WANDB_RUN_ID=Run.id)
+            cfg["online_preprocess"]["enabled"] = True
+            cfg = apply_parameters(cfg, Run.config)
+            cfg["train"]["run_name"] = "frcnn_sweep_fixture_12345678"
+            _, dataset = load_cache(cfg)
+            if rank == 0:
+                path = work/"candidate_0"
+                path.mkdir()
+                (path/"sweep_trial.json").write_text(json.dumps(dict(
+                    run_id=Run.id, sweep_id=Run.sweep_id, parameters=Run.config,
+                    config_sha256=content_hash(cfg), dataset_sha256=content_hash(dataset))))
+            dist.barrier()
         pipe = FasterRCNNPipeline(cfg, work/f"candidate_{rank}")
         result = pipe.fit()
         assert result["effective"]["train_padding_samples"] == 1
@@ -55,4 +76,4 @@ def worker(rank, work):
 
 if __name__ == "__main__":
     import torch.multiprocessing as mp
-    mp.spawn(worker, args=(sys.argv[1],), nprocs=2, join=True)
+    mp.spawn(worker, args=(sys.argv[1], "--sweep" in sys.argv), nprocs=2, join=True)

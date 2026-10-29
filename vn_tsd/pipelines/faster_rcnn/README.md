@@ -179,6 +179,55 @@ Mỗi run chứa:
 Artifacts không tự là kết quả tốt; phân tích localization/class confusion/small objects/negative false positives sau run thật.
 Không bịa good/bad examples hoặc metric khi chưa có run. Tuấn tích hợp geometry/demo/báo cáo và lời giải thích input/output.
 
+## Forge Sweeps
+
+Notebook riêng: `notebooks/frcnn/frcnn_forge_sweeps.ipynb`; notebook03 chung không đổi.
+Search đề xuất ở `configs/sweeps/faster_rcnn.yaml`: LR/weight decay theo log distribution,
+dropout/jitter theo danh sách. Chưa coi search space hoặc ngân sách là tối ưu/đã nghiệm thu.
+
+Workflow: preflight cố định2epochs → pilot baseline ngân sách dài → chốt cap/patience/batch/budget
+→ sweep → confirmation → khóa protocol → các seed còn lại. Mỗi campaign mới có thư mục riêng.
+Không xếp hạng chung các trial có epoch/cosine budget khác nhau; không dùng test để chọn.
+
+```bash
+# Offline prepare: reads/hashes cache, freezes source/config/runtime. No W&B init/training.
+# 1 is an example of a finite cap; set the reviewed budget after pilot for tuning.
+python -m vn_tsd.pipelines.faster_rcnn.sweep prepare --campaign /kaggle/working/frcnn_sweeps/NAME --data-root /path/to/processed --run-cap 1 --nproc 2 --test-policy shared
+# Explicit network operation: register once; saves/reuses sweep_id.json.
+python -m vn_tsd.pipelines.faster_rcnn.sweep register --campaign /kaggle/working/frcnn_sweeps/NAME
+# Explicit GPU operation; one sequential agent, each trial uses two GPUs.
+python -m vn_tsd.pipelines.faster_rcnn.sweep agent --campaign /kaggle/working/frcnn_sweeps/NAME --count 1
+```
+
+`--test-policy shared` giữ auto-test theo config nhóm. `skip` là lựa chọn tường minh cho campaign
+không chạy test, cần thống nhất nhóm; không thay shared YAML. Notebook mặc định giữ `shared`.
+Preflight/pilot dùng grid một bộ tham số baseline; tuning dùng search YAML. Epoch override chỉ nằm
+trong campaign, không sửa defaults nhóm. Hai epoch preflight với warmup3 là warmup-only, không phải benchmark.
+
+CLI agent cấp `WANDB_RUN_ID`, `WANDB_SWEEP_ID` và `${args_json_file}` cho launcher.
+Launcher không gọi `wandb.init`; nó ghi một config chung rồi chạy torchrun. Pipeline rank0 tạo đúng
+một run/trial và đối chiếu sampled config với resolved config trước tải weights. Mọi rank kiểm hash
+config/cache; thay source hoặc package versions sau prepare bị từ chối. Jitter0 không tự đổi masterON.
+
+Objective `sweep/best_val_map` là full-precision best validation mAP50–95, log/summary một lần khi
+trial hoàn tất. Test và last-val không được dùng làm objective. Không Hyperband trong đợt đầu.
+Failed/interrupted không được gán score0; agent có thể nhận trial kế tiếp trong count đã đặt.
+Muốn ngừng nhận trial mới hãy Pause/Stop Sweep; Cancel hoặc stop notebook có thể ngắt trial hiện tại.
+Linux launcher chuyển stop tới cả process group torchrun, có timeout/kill fallback; NCCL hard failure
+và Kaggle session kill vẫn cần kiểm thực tế. V1 không resume training; trial bị ngắt cần runID mới.
+
+Outputs: campaign config/search/source hashes/runtime/cache identity/ID; `trials/<runID>/` giữ pipeline
+artifacts, sampled parameters, console log, launch receipt, `run.zip` và checksum SHA256.
+Launcher đóng logs rồi repack ZIP, kể cả controlled failure. Không tự upload model artifact/checkpoint;
+SaveVersion và tải ZIP/checksum. Khôi phục campaign đúng đường dẫn tuyệt đối khi tiếp tục session,
+cùng source/environment/cache; không sửa campaign để trộn các điều kiện thực nghiệm khác nhau.
+Nếu đăng ký bị mất phản hồi và chỉ có `registration_started.json`, kiểm Forge và khôi phục ID thật;
+không xóa marker rồi đăng ký mù vì có thể tạo trùng Sweep.
+
+Nguồn: [CoreWeave walkthrough](https://docs.coreweave.com/products/wandb/sweeps/walkthrough),
+[config/command macros](https://docs.coreweave.com/products/wandb/sweeps/sweep-config-keys).
+Local tests dùng W&B giả và CPU/Gloo, không xác nhận Forge private project hoặc Kaggle NCCL.
+
 ## Loader cho demo
 
 ```python

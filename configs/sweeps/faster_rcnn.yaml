@@ -1,0 +1,9 @@
+# Proposed search space. Set the run cap explicitly after profiling/pilot.
+# No Hyperband: late-learning trials must not be pruned in the first campaign.
+method: bayes
+metric: {name: sweep/best_val_map, goal: maximize}
+parameters:
+  train.lr: {distribution: log_uniform_values, min: 0.0005, max: 0.01}
+  train.weight_decay: {distribution: log_uniform_values, min: 0.00001, max: 0.001}
+  model.head_dropout: {values: [0.0, 0.2, 0.4]}
+  online_preprocess.jitter: {values: [0.0, 0.05, 0.1, 0.15]}
