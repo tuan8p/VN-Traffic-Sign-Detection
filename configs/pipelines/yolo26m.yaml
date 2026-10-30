@@ -33,7 +33,7 @@ online_preprocess:
   letterbox: true
   normalize: true
   hflip: false
-  color_jitter: false
+  color_jitter: true
   mosaic: true
   mixup: false
   jitter: 0.1
