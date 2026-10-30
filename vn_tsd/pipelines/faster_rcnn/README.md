@@ -182,6 +182,10 @@ Không bịa good/bad examples hoặc metric khi chưa có run. Tuấn tích h�
 ## Forge Sweeps
 
 Notebook riêng: `notebooks/frcnn/frcnn_forge_sweeps.ipynb`; notebook03 chung không đổi.
+Notebook mặc định sẵn preflight2epochs/1trial, source9ec948e, projectoverride `sandbox`, testpolicy `shared`;
+register/agent đều bật: RunAll/Save&RunAll thực sự chạy GPU. Pilot/tuning giữsandbox, final mới vàoBTL.
+Cellcuối export mộtZIP+SHA256 ngay `/kaggle/working`, gom campaign và mọi trial, bỏZIP lồng.
+Có thể chạy riêng cellcuối cho campaign đã chạy để tải kết quả, không cần train lại.
 Search đề xuất ở `configs/sweeps/faster_rcnn.yaml`: LR/weight decay theo log distribution,
 dropout/jitter theo danh sách. Chưa coi search space hoặc ngân sách là tối ưu/đã nghiệm thu.
 

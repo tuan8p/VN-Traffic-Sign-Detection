@@ -239,22 +239,54 @@ def test_stop_signal_terminates_trial_and_keeps_interrupted_receipt(tmp_path, mo
     assert status == {"status": "interrupted", "error_type": "KeyboardInterrupt"}
 
 
-def test_notebook_parses_and_network_gpu_cells_default_to_no_action():
+def test_notebook_preflight_defaults_are_ready_for_sandbox():
     import ast
     notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
-    gated = 0
+    assigned = {}
     for cell in notebook["cells"]:
         if cell["cell_type"] != "code":
             continue
         assert cell["outputs"] == [] and cell["execution_count"] is None
         code = "".join(cell["source"])
         ast.parse(code)
-        if code.startswith(("REGISTER_SWEEP =", "START_AGENT =")):
-            runner = Mock()
-            exec(compile(code, "sweep-notebook", "exec"), {"run": runner})
-            runner.assert_not_called()
-            gated += 1
-    assert gated == 2
+        for node in ast.parse(code).body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                try:
+                    assigned[node.targets[0].id] = ast.literal_eval(node.value)
+                except (ValueError, TypeError):
+                    pass
+    assert assigned["REGISTER_SWEEP"] is True and assigned["START_AGENT"] is True
+    assert assigned["AGENT_COUNT"] == 1 and assigned["STAGE"] == "preflight"
+    assert assigned["WANDB_PROJECT"] == "sandbox" and assigned["TEST_POLICY"] == "shared"
+    assert assigned["CAMPAIGN_NAME"] == "frcnn_preflight_s42_sandbox_v1"
+    assert len(assigned["REPO_REF"]) == 40
+    source = ''.join(notebook['cells'][5]['source'])
+    assert '"wandb_project": WANDB_PROJECT' in source
+
+
+def test_notebook_export_puts_one_bundle_and_checksum_at_output_root(tmp_path, monkeypatch):
+    import hashlib
+    import zipfile
+    notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
+    campaign = tmp_path/'campaign'
+    run = campaign/'trials/r1'
+    run.mkdir(parents=True)
+    (campaign/'sweep_id.json').write_text('{"sweep_id":"s1"}')
+    (run/'checkpoint.pt').write_bytes(b'fixture weights')
+    (run/'run.zip').write_bytes(b'excluded duplicate archive')
+    (run/'run.zip.sha256').write_text('old checksum')
+    code = ''.join(notebook['cells'][11]['source'])
+    # Execute the actual export cell, replacing only the Kaggle output mount.
+    code = code.replace('Path("/kaggle/working")', 'OUTPUT_ROOT')
+    namespace = dict(CAMPAIGN=campaign, Path=Path, json=json, OUTPUT_ROOT=tmp_path)
+    exec(compile(code, 'notebook-export', 'exec'), namespace)
+    bundle, checksum = namespace['bundle'], namespace['checksum']
+    assert bundle.parent == checksum.parent == tmp_path
+    assert checksum.read_text().split()[0] == hashlib.sha256(bundle.read_bytes()).hexdigest()
+    with zipfile.ZipFile(bundle) as archive:
+        assert archive.read('campaign/trials/r1/checkpoint.pt') == b'fixture weights'
+        assert 'campaign/sweep_id.json' in archive.namelist()
+        assert not any(p.endswith(('.zip', '.sha256')) for p in archive.namelist())
 
 
 def test_prepare_real_synthetic_cache_freezes_identity_and_explicit_test_policy(tmp_path):
