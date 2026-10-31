@@ -182,8 +182,17 @@ Không bịa good/bad examples hoặc metric khi chưa có run. Tuấn tích h�
 ## Forge Sweeps
 
 Notebook riêng: `notebooks/frcnn/frcnn_forge_sweeps.ipynb`; notebook03 chung không đổi.
-Notebook mặc định sẵn preflight2epochs/1trial, source9ec948e, projectoverride `sandbox`, testpolicy `shared`;
-register/agent đều bật: RunAll/Save&RunAll thực sự chạy GPU. Pilot/tuning giữsandbox, final mới vàoBTL.
+Notebook hiện bàn giao sẵn tuning Bayesian tối đa8trial: source7746b79, seed42,
+cap100/warmup3/ES10, batch24/eval32, projectoverride `sandbox`, testpolicy `shared`.
+Mỗi phiên agentcount1, mỗi trial dùng cả2GPU. register/agent đều bật: RunAll/Save&RunAll thực sự chạy GPU.
+Các bước preflight/pilot đã hoàn tất trước campaign tuning; không thêm overridepatience101 của đối chứng.
+Lần đầu giữ `CAMPAIGN_ACTION="new"`. Phiên sau dùng `"continue"`, AddInput bundle+checksum đãexport
+(hoặc điền `RESTORE_BUNDLE` path); khôi phục đúngpath/hash/runtime/SweepID. Không tìm đượcID thì dừng,
+không tạoSweep thay thế. Source training không đổi so pilot; notebook mới không cần sửa pipeline.
+Không chạyhaiagent đồngthời; không tự tạo campaign khác để vượt8attempts. Localcap tính cảfailed,
+serverrun_cap giữ8; failed/interrupted không được biến thànhscore0 hoặc tựbù ngoàibudget.
+Sau8trial dừng đểreviewwinner vàtốiđa4ablation riêng; notebook không tựchạy đối chứng/finalseeds.
+Pilot/tuning giữsandbox, final mới vàoBTL.
 Cellcuối export mộtZIP+SHA256 ngay `/kaggle/working`, gom campaign và mọi trial, bỏZIP lồng.
 Có thể chạy riêng cellcuối cho campaign đã chạy để tải kết quả, không cần train lại.
 Search đề xuất ở `configs/sweeps/faster_rcnn.yaml`: LR/weight decay theo log distribution,

@@ -239,7 +239,7 @@ def test_stop_signal_terminates_trial_and_keeps_interrupted_receipt(tmp_path, mo
     assert status == {"status": "interrupted", "error_type": "KeyboardInterrupt"}
 
 
-def test_notebook_preflight_defaults_are_ready_for_sandbox():
+def test_notebook_tuning_defaults_are_ready_for_sandbox():
     import ast
     notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
     assigned = {}
@@ -256,12 +256,109 @@ def test_notebook_preflight_defaults_are_ready_for_sandbox():
                 except (ValueError, TypeError):
                     pass
     assert assigned["REGISTER_SWEEP"] is True and assigned["START_AGENT"] is True
-    assert assigned["AGENT_COUNT"] == 1 and assigned["STAGE"] == "preflight"
+    assert assigned["AGENT_COUNT"] == 1 and assigned["STAGE"] == "tuning"
     assert assigned["WANDB_PROJECT"] == "sandbox" and assigned["TEST_POLICY"] == "shared"
-    assert assigned["CAMPAIGN_NAME"] == "frcnn_preflight_s42_sandbox_v1"
+    assert assigned["CAMPAIGN_NAME"] == "frcnn_tune_s42_es10_bayes8_sandbox_v1"
+    assert assigned["TUNING_RUN_CAP"] == 8 and assigned["TUNING_EPOCHS"] == 100
+    assert assigned["EARLY_STOPPING_PATIENCE"] == 10 and assigned["WARMUP_EPOCHS"] == 3
+    assert assigned["REPO_REF"] == "7746b79da7a86830ad4223030292ed09507fa905"
     assert len(assigned["REPO_REF"]) == 40
     source = ''.join(notebook['cells'][5]['source'])
     assert '"wandb_project": WANDB_PROJECT' in source
+
+
+def notebook_cell(index):
+    notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
+    return ''.join(notebook['cells'][index]['source'])
+
+
+def test_tuning_prepare_export_restore_keeps_config_id_and_attempt_count(tmp_path, monkeypatch):
+    from frcnn_fixtures import make_cache
+    import sys
+    cache = make_cache(tmp_path/'cache')
+    output = tmp_path/'campaigns'
+    code = notebook_cell(5).replace('Path("/kaggle/working/frcnn_sweeps")', 'OUTPUT_ROOT')
+    code = code.replace('Path(load_yaml("configs/runtime/kaggle.yaml")["data_root_default"])', 'CACHE_ROOT')
+    namespace = dict(Path=Path, json=json, load_yaml=load_yaml, OUTPUT_ROOT=output, CACHE_ROOT=cache)
+    exec(compile(code, 'tuning-prepare', 'exec'), namespace)
+    directory = namespace['CAMPAIGN']
+    frozen, cfg, spec = sweep.load_campaign(directory)
+    assert cfg['train']['early_stopping_patience'] == 10 and cfg['train']['epochs'] == 100
+    assert cfg['train']['warmup_epochs'] == 3 and cfg['project']['wandb_project'] == 'sandbox'
+    assert spec['method'] == 'bayes' and spec['run_cap'] == 8
+    sampled = sweep.apply_parameters(cfg, VALUES)
+    assert sampled['train']['lr'] == VALUES['train.lr'] != cfg['train']['lr']
+    sdk = Mock()
+    sdk.sweep.return_value = 'tuning123'
+    monkeypatch.setitem(sys.modules, 'wandb', sdk)
+    assert sweep.register(directory)['sweep_id'] == 'tuning123'
+    assert sweep.register(directory)['sweep_id'] == 'tuning123'
+    sdk.sweep.assert_called_once()
+    sdk.init.assert_not_called()
+    for i in range(8):
+        sweep.write_json({'status': 'failed' if i == 1 else 'completed'}, directory/f'trials/r{i}/launch_status.json')
+    monkeypatch.setenv('WANDB_MODE','online')
+    runner = Mock()
+    namespace.update(run=runner, sys=sys)
+    exec(compile(notebook_cell(9),'tuning-agent','exec'),namespace)
+    runner.assert_not_called()  # eight attempts, including the failed trial
+    export = notebook_cell(11).replace('Path("/kaggle/working")','EXPORT_ROOT')
+    namespace['EXPORT_ROOT'] = tmp_path
+    exec(compile(export,'tuning-export','exec'),namespace)
+    bundle = namespace['bundle']
+    backup = directory.with_name(directory.name+'_original')
+    assert backup.is_relative_to(tmp_path)
+    directory.rename(backup)
+    namespace['restore_campaign'](bundle,directory)
+    restored, cfg2, spec2 = sweep.load_campaign(directory)
+    assert frozen == restored and cfg == cfg2 and spec == spec2
+    assert sweep.register(directory)['sweep_id'] == 'tuning123'
+    sdk.sweep.assert_called_once()  # no new sweep after recovery
+    continuation = code.replace('CAMPAIGN_ACTION = "new"','CAMPAIGN_ACTION = "continue"')
+    exec(compile(continuation,'tuning-continue','exec'),namespace)
+    exec(compile(notebook_cell(9),'tuning-agent','exec'),namespace)
+    runner.assert_not_called()
+    with pytest.raises(AssertionError,match='ghi đè'):
+        namespace['restore_campaign'](bundle,directory)
+
+
+def test_tuning_continuation_missing_bundle_cannot_silently_create_campaign(tmp_path):
+    from frcnn_fixtures import make_cache
+    code = notebook_cell(5).replace('Path("/kaggle/working/frcnn_sweeps")', 'OUTPUT_ROOT')
+    code = code.replace('Path(load_yaml("configs/runtime/kaggle.yaml")["data_root_default"])', 'CACHE_ROOT')
+    code = code.replace('CAMPAIGN_ACTION = "new"','CAMPAIGN_ACTION = "continue"')
+    code = code.replace('Path("/kaggle/input")', 'INPUT_ROOT')
+    namespace=dict(Path=Path,json=json,load_yaml=load_yaml,OUTPUT_ROOT=tmp_path/'out',
+                   CACHE_ROOT=make_cache(tmp_path/'cache'),INPUT_ROOT=tmp_path/'empty')
+    with pytest.raises(AssertionError,match='bundle'):
+        exec(compile(code,'continue-no-bundle','exec'),namespace)
+    assert not (tmp_path/'out').exists()
+
+
+@pytest.mark.parametrize('unsafe', ['../outside.txt', '/absolute/path.txt', 'campaign/../../outside.txt'])
+def test_notebook_restore_rejects_unsafe_paths(tmp_path, unsafe):
+    import ast,hashlib,zipfile
+    tree=ast.parse(notebook_cell(5))
+    function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='restore_campaign')
+    import stat,uuid
+    namespace=dict(Path=Path,hashlib=hashlib,uuid=uuid,stat=stat,ZipFile=zipfile.ZipFile)
+    exec(compile(ast.Module(body=[function],type_ignores=[]),'restore-function','exec'),namespace)
+    bundle=tmp_path/'unsafe.zip'
+    with zipfile.ZipFile(bundle,'w') as archive:archive.writestr(unsafe,'bad')
+    bundle.with_suffix('.zip.sha256').write_text(hashlib.sha256(bundle.read_bytes()).hexdigest()+'  unsafe.zip')
+    with pytest.raises(AssertionError,match='Unsafe'):
+        namespace['restore_campaign'](bundle,tmp_path/'target'/'campaign')
+    assert not (tmp_path/'outside.txt').exists()
+
+
+def test_tuning_agent_requests_one_new_trial_before_cap(tmp_path):
+    import sys
+    sweep.write_json({'sweep_id':'existing'},tmp_path/'sweep_id.json')
+    runner=Mock()
+    namespace=dict(CAMPAIGN=tmp_path, TUNING_RUN_CAP=8, run=runner, sys=sys)
+    exec(compile(notebook_cell(9),'agent-cell','exec'),namespace)
+    command=runner.call_args.args[0]
+    assert command[-2:]==['--count',1]
 
 
 def test_notebook_export_puts_one_bundle_and_checksum_at_output_root(tmp_path, monkeypatch):
