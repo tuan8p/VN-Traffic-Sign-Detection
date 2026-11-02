@@ -240,5 +240,6 @@ venv/
 .pixi
 !.pixi/config.toml
 
-# vscode
+# IDE
 .vscode
+.zed
