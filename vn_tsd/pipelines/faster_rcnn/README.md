@@ -241,6 +241,76 @@ Nguồn: [CoreWeave walkthrough](https://docs.coreweave.com/products/wandb/sweep
 [config/command macros](https://docs.coreweave.com/products/wandb/sweeps/sweep-config-keys).
 Local tests dùng W&B giả và CPU/Gloo, không xác nhận Forge private project hoặc Kaggle NCCL.
 
+## Ablation sau Sweep seed42
+
+Notebook `notebooks/frcnn/frcnn_ablation.ipynb` chạy **một đối chứng mỗi phiên**.
+Năm lựa chọn `ABLATION`: `lr`, `weight_decay`, `dropout`, `jitter`, `standard`;
+mỗi bản Kaggle chọn một mục và có output riêng.
+Mỗi phiên dùng T4×2, tạo run Forge độc lập trong sandbox, group `frcnn_ablation_s42_v1`;
+không tạo thêm trial trong Sweep tuning. Có thể chạy song song ở các phiên GPU độc lập.
+
+Add Input cache cũ và Output tuning cuối có `...-artifacts-e2d80e82.zip` + `.zip.sha256`.
+`REFERENCE_BUNDLE` tự tìm đúng tên bundle hoặc nhận Copy file path khi có nhiều Input.
+Notebook pin SHA256 bundle, source a99d294, đối chiếu runtime/cache và đọc config winner
+`ahgf5kge`; không load hoặc extract checkpoint winner. Giữ seed42/cap100/warmup3/ES10,
+batch24/eval32 và fresh COCO pretrained. Mỗi run giữ recipe winner, chỉ đổi một mục:
+LR0.002, WD0.0005, dropout0.2, jitter0.0, hoặc head=`standard`.
+Ba mục đầu trả về baseline. Jitter0 tắt affine jitter, master online vẫn ON;
+baseline jitter thực tế là0.1 nên đây là đối chứng bỏ thành phần, không phải trả về baseline.
+Ở standard, raw fields head_hidden_dim/head_dropout giữ nguyên nhưng không áp dụng vào predictor.
+Đây là so sánh thay head dưới recipe đã chọn cho custom; chưa phải standard đã được tuning riêng.
+Các đối chứng seed42 đo tác dụng có điều kiện, không tách toàn bộ tương tác hoặc chứng minh
+ổn định qua nhiều seed. Dùng validation, không test, để quyết định cấu hình cuối.
+
+`START_TRAIN=True` đã đặt sẵn; Save & Run All thực sự train. Mỗi phiên export ZIP/checksum
+ra Output gốc trong `finally`, kể cả controlled failure. Khi cần khôi phục output của chính
+đối chứng, Add Input ZIP/checksum đó và đặt `RESTORE_OUTPUT`; completed run được kiểm rồi
+bỏ qua, failed/interrupted không tự retry. Hard session kill không bảo đảm `finally` chạy.
+Giữ Save Version outputs. V1 không resume training hoặc tự upload checkpoint Artifact lên Forge.
+Exporter bỏ qua symbolic links (W&B log aliases/latest-run), không dereference chúng;
+file thường và checkpoint vẫn được đóng gói, danh sách link bỏ qua nằm trong export_receipt.json.
+Nếu notebook cũ báo `Symlink output rejected` sau train, lỗi nằm ở export sau training;
+bản notebook chính hiện đã bỏ qua links. Không cần thêm notebook cứu riêng.
+Nếu session cũ còn sống, có thể thay riêng hàm export rồi gọi lại để đóng gói kết quả đã có;
+không khởi động training chỉ để sửa ZIP. Nếu chạy một thí nghiệm mới, import bản chính đã sửa.
+
+Source training pin đã có trên remote, nên notebook mới có thể chạy khi được import mà không
+cần thay REPO_REF sang commit chứa notebook. Local tests dùng cache/worker giả, không xác nhận
+Kaggle CUDA/NCCL, quyền project, hoặc khả năng chạy đồng thời nhiều phiên GPU.
+
+## Final seeds sau HPO/ablation — khóa ngày 2026-11-02
+
+`configs/pipelines/faster_rcnn_baseline.yaml` giữ nguyên cấu hình trước Sweep.
+`configs/pipelines/faster_rcnn.yaml` là cấu hình winner mặc định dùng tiếp.
+`configs/experiments/faster_rcnn_final_protocol.json` lưu protocol, đường dẫn/hash cấu hình,
+source/reference identity và giới hạn; không nhân bản các siêu tham số đã có trong YAML.
+Winner seed42 `ahgf5kge`: custom512/dropout0.4/LR0.009606472124890571/
+WD0.000014756984677083597/jitter0.1, cap100/warmup3/ES10/global24/eval32.
+Dùng lại seed42 hiện có trong sandbox để tổng hợp năm seed. Có thể chạy lại 42 để kiểm lặp;
+run lặp được đánh dấu, không tự thay run gốc hay cộng thành seed thứ sáu.
+
+Import `notebooks/frcnn/frcnn_final_seeds.ipynb`. Nhận một seed `SEED=21` hoặc danh sách có thứ tự
+`SEED=[21,7]`, từ một đến năm seed khác nhau trong `[42,7,21,123,2026]`.
+Không dùng set `{21,7}` vì không giữ thứ tự. Hai phiên song song có thể đặt
+`SEED=[7,21]` và `SEED=[123,2026]`; mỗi phiên chạy nối tiếp, mỗi run dùng hai T4.
+Attach cùng cache và Output tuning cuối có ZIPe2d80e82+checksum như ablation; T4×2,
+InternetON/SecretWANDB_API_KEY. `START_TRAIN=True`; Save & Run All train từng run độc lập trong
+**BTL**, group `frcnn_final_v1`. Không cần output seed trước; dùng cùng reference cho cả bốn seed.
+Sourcepin a99d294 đã publish; notebook lấy recipe trực tiếp từ bundle đã pinhash,
+không đọc YAML/JSON mới ở checkout cũ. Không đổi sourcepin sang commit chứa cấu hình mới trong cùng protocol.
+Notebook03 của nhóm giữ nguyên; các biến override của notebook đó có thể ghi đè default YAML.
+Notebook kiểm source/runtime/cache và đọc JSON/YAML tham chiếu, không load checkpoint winner.
+
+ZIP/checksum xuất ở Output gốc (bỏ qua W&B symlinks); lưu local tại
+`.agents/artifacts/notebooks/frcnn_final_seeds/seed_<seed>/` rồi gửi review.
+Mỗi seed export ngay một cặp ZIP/checksum. `RESTORE_OUTPUT` nhận ZIP của đúng seed khi chạy đơn,
+hoặc dict `{7: "...zip", 21: "...zip"}` khi chạy nhiều seed, để kiểm completed và skip.
+Failed/dở dừng hàng đợi, không tự retry hoặc resume training. Giữ Save Version outputs;
+hard-kill không bảo đảm finally chạy. Chọn số seed sao cho đủ giới hạn thời gian phiên Kaggle.
+Review đủ bốn seed mới tổng hợp cùng seed42, mean và sample std ddof=1; không chọn/bỏ seed theo score.
+Các metric test chỉ report; split cảnh/frame và test exposure hiện tại vẫn phải ghi trong báo cáo.
+Mean/std của winner không thay cho paired multi-seed benchmark với baseline hoặc standard.
+
 ## Loader cho demo
 
 ```python

@@ -261,7 +261,8 @@ def test_notebook_tuning_defaults_are_ready_for_sandbox():
     assert assigned["CAMPAIGN_NAME"] == "frcnn_tune_s42_es10_bayes8_sandbox_v1"
     assert assigned["TUNING_RUN_CAP"] == 8 and assigned["TUNING_EPOCHS"] == 100
     assert assigned["EARLY_STOPPING_PATIENCE"] == 10 and assigned["WARMUP_EPOCHS"] == 3
-    assert assigned["REPO_REF"] == "7746b79da7a86830ad4223030292ed09507fa905"
+    # The published tuning notebook was pinned to the campaign/recovery commit.
+    assert assigned["REPO_REF"] == "37352dfb7abd6cabeed5fecfdf44a3a018629274"
     assert len(assigned["REPO_REF"]) == 40
     source = ''.join(notebook['cells'][5]['source'])
     assert '"wandb_project": WANDB_PROJECT' in source
