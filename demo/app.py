@@ -166,14 +166,35 @@ def main() -> None:
 
         pil_image: Image.Image | None = None
 
+        def _safe_load_pil(file_bytes_or_path) -> Image.Image | None:
+            """Safely load any web/phone image, auto-orient EXIF, and handle transparency."""
+            from PIL import ImageOps
+            try:
+                if isinstance(file_bytes_or_path, (bytes, bytearray)):
+                    img = Image.open(io.BytesIO(file_bytes_or_path))
+                else:
+                    img = Image.open(file_bytes_or_path)
+                img = ImageOps.exif_transpose(img)
+                if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                    # Composite transparent regions onto clean white background
+                    bg = Image.new("RGB", img.size, (255, 255, 255))
+                    alpha_src = img.convert("RGBA")
+                    bg.paste(alpha_src, mask=alpha_src.split()[3])
+                    return bg
+                return img.convert("RGB")
+            except Exception as exc:
+                st.error(f"Không thể mở file ảnh: {exc}")
+                return None
+
         if input_mode == "Upload file":
             uploaded = st.file_uploader(
                 "Chọn hoặc kéo thả file ảnh",
-                type=["jpg", "jpeg", "png", "bmp", "webp"],
-                help="Hỗ trợ JPG, PNG, BMP, WebP",
+                type=["jpg", "jpeg", "png", "bmp", "webp", "jfif"],
+                help="Hỗ trợ JPG, JPEG, PNG, BMP, WebP, JFIF",
             )
             if uploaded is not None:
-                pil_image = Image.open(io.BytesIO(uploaded.read())).convert("RGB")
+                # Use uploaded.getvalue() to prevent EOF stream exhaustion across reruns
+                pil_image = _safe_load_pil(uploaded.getvalue())
 
         else:  # Sample images
             samples = _sample_images()
@@ -218,7 +239,7 @@ def main() -> None:
                 )
                 if chosen:
                     st.session_state["sample_idx"] = samples.index(chosen)
-                    pil_image = Image.open(chosen).convert("RGB")
+                    pil_image = _safe_load_pil(chosen)
 
         st.divider()
         st.subheader("Trọng số mô hình (Checkpoints)")
@@ -271,12 +292,21 @@ def main() -> None:
             help="Chỉ hiển thị box có điểm tin cậy lớn hơn hoặc bằng ngưỡng",
         )
 
+        has_torch = False
         has_cuda = False
         try:
             import torch
+            has_torch = True
             has_cuda = torch.cuda.is_available()
         except Exception:
             pass
+
+        if not has_torch and (frcnn_ckpt is not None or yolo_ckpt is not None):
+            st.error(
+                "Cảnh báo môi trường: Không tìm thấy thư viện PyTorch trong Python đang chạy. "
+                "Vui lòng chạy Streamlit bằng Python 3.12 của hệ thống: "
+                "`python -m streamlit run demo/app.py`"
+            )
 
         device_options = ["cpu", "cuda"]
         device_labels = {
@@ -334,8 +364,9 @@ def main() -> None:
     st.divider()
 
     # ── Run inference when button pressed OR parameters change ────────────────
-    current_run_key = (id(pil_image), str(frcnn_ckpt), str(yolo_ckpt), score_thresh, device)
-    current_geo_key = (id(pil_image), show_geometry, canny_lo, canny_hi, hough_thresh)
+    img_sig = (pil_image.size, pil_image.tobytes()[:256]) if pil_image is not None else None
+    current_run_key = (img_sig, str(frcnn_ckpt), str(yolo_ckpt), score_thresh, device)
+    current_geo_key = (img_sig, show_geometry, canny_lo, canny_hi, hough_thresh)
 
     need_inference = run_btn or (st.session_state.get("last_run_key") != current_run_key)
     need_geometry = run_btn or (st.session_state.get("last_geo_key") != current_geo_key)

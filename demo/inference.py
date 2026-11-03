@@ -117,6 +117,19 @@ def _mock_predict(pil_image, pipeline: str, score_threshold: float = _DEMO_SCORE
 # Faster R-CNN inference
 # ─────────────────────────────────────────────────────────────────────────────
 
+_FRCNN_MODEL_CACHE: dict[tuple[str, str], Any] = {}
+
+
+def _get_faster_rcnn_model(checkpoint: str | Path, device: str = "cpu"):
+    key = (str(checkpoint), device)
+    if key not in _FRCNN_MODEL_CACHE:
+        from vn_tsd.pipelines.faster_rcnn.model import load_checkpoint
+        model, metadata = load_checkpoint(checkpoint, device=device)
+        model.eval()
+        _FRCNN_MODEL_CACHE[key] = (model, metadata)
+    return _FRCNN_MODEL_CACHE[key]
+
+
 def _infer_faster_rcnn(
     pil_image,
     checkpoint: str | Path,
@@ -124,17 +137,16 @@ def _infer_faster_rcnn(
     score_threshold: float = _DEMO_SCORE_THRESHOLD,
 ) -> dict[str, Any]:
     import torch
-    from vn_tsd.pipelines.faster_rcnn.model import load_checkpoint
     from torchvision.transforms.functional import to_tensor
 
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
 
-    model, metadata = load_checkpoint(checkpoint, device=device)
-    model.eval()
+    model, metadata = _get_faster_rcnn_model(checkpoint, device=device)
 
     # Prepare input: letterbox then normalise (model normalises internally)
     rgb = _pil_to_numpy_rgb(pil_image)
+    w_orig, h_orig = pil_image.size
     lb, scale, pad_x, pad_y = _letterbox(rgb)
     tensor = to_tensor(lb).to(device)  # float32 [0,1] CHW
 
@@ -154,10 +166,16 @@ def _infer_faster_rcnn(
         label = label_1based - 1  # convert 1-based → 0-based
         if not (0 <= label < len(CLASS_NAMES)):
             continue
-        # coordinates in 640-space; also map back to original
+        # coordinates in 640-space; map back to original and clamp to image bounds
         orig = _boxes_to_original([xyxy_640], scale, pad_x, pad_y)[0]
+        clamped_orig = [
+            max(0.0, min(float(w_orig), float(orig[0]))),
+            max(0.0, min(float(h_orig), float(orig[1]))),
+            max(0.0, min(float(w_orig), float(orig[2]))),
+            max(0.0, min(float(h_orig), float(orig[3]))),
+        ]
         boxes.append(dict(
-            xyxy=orig,
+            xyxy=clamped_orig,
             xyxy_640=list(xyxy_640),
             score=round(float(score), 4),
             label=label,

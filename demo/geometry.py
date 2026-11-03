@@ -305,8 +305,14 @@ def rectify_sign(
         [0, th - 1],
     ], dtype="float32")
 
-    H = cv2.getPerspectiveTransform(ordered_global_pts, dst_pts)
-    rectified = cv2.warpPerspective(bgr, H, (tw, th), flags=cv2.INTER_LANCZOS4)
+    try:
+        H = cv2.getPerspectiveTransform(ordered_global_pts, dst_pts)
+        rectified = cv2.warpPerspective(bgr, H, (tw, th), flags=cv2.INTER_LANCZOS4)
+    except Exception:
+        # Fallback to direct ROI crop and resize if matrix estimation fails
+        rectified = cv2.resize(roi, (tw, th), interpolation=cv2.INTER_LINEAR)
+        H = np.eye(3, dtype="float32")
+        method = "Khung chữ nhật trực tiếp (Fallback)" 
 
     # Vẽ các đỉnh và đường nối lên ROI minh họa
     roi_annotated = roi.copy()
