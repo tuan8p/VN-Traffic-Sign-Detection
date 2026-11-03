@@ -84,7 +84,17 @@ def _find_checkpoints(pipeline: str) -> list[Path]:
         other_pts = sorted(p for p in out_dir.rglob("*.pt") if p.name != "checkpoint_best.pt")
         candidates.extend(best_pts + other_pts)
 
-    # 2. checkpoints/<pipeline>/... or checkpoints/
+    # 2. Workspace root sibling directories (e.g. frcnn_seed42_best)
+    parent_dir = _REPO_ROOT.parent
+    keywords = ["faster_rcnn", "frcnn"] if pipeline == "faster_rcnn" else ["yolo"]
+    for kw in keywords:
+        for folder in parent_dir.glob(f"*{kw}*"):
+            if folder.is_dir():
+                best_pts = sorted(folder.rglob("checkpoint_best.pt"))
+                other_pts = sorted(p for p in folder.rglob("*.pt") if p.name != "checkpoint_best.pt")
+                candidates.extend(best_pts + other_pts)
+
+    # 3. checkpoints/<pipeline>/... or checkpoints/
     ckpt_dir = _REPO_ROOT / "checkpoints" / pipeline
     if ckpt_dir.is_dir():
         candidates.extend(sorted(ckpt_dir.rglob("*.pt")))
@@ -116,7 +126,7 @@ def main() -> None:
         return
 
     from demo.inference import predict, draw_boxes, CLASS_NAMES
-    from demo.geometry import overlay_on_pil
+    from demo.geometry import overlay_on_pil, rectify_sign_pil
 
     # ── Page config ────────────────────────────────────────────────────────────
     st.set_page_config(
@@ -449,61 +459,139 @@ def main() -> None:
 
     # ── Section 3.2 — Geometry ─────────────────────────────────────────────────
     st.divider()
-    st.subheader("Phân tích hình học — Mục 3.2 (Canny + Hough Lines)")
+    st.subheader("Phân tích hình học và cấu trúc cảnh (Mục 3.2)")
     st.caption(
-        "Phương pháp: Canny edge detection và Probabilistic Hough Transform. "
-        "Phát hiện cạnh biên và đường thẳng cấu trúc trong cảnh giao thông, "
-        "chồng lớp (overlay) lên ảnh gốc để so sánh trực quan."
+        "Vận dụng kiến thức hình học thị giác máy tính: (A) Trích xuất cấu trúc biên và đường thẳng toàn cảnh; "
+        "(B) Ước lượng phép biến đổi phối cảnh 2D Homography để nắn thẳng (rectify) biển báo bị chụp nghiêng."
     )
 
-    if not show_geometry:
-        st.info("Bật tùy chọn 'Phân tích Canny + Hough' ở thanh bên để xem kết quả.")
-    elif geo_result is None:
-        st.warning("Chưa có kết quả phân tích. Nhấn 'Chạy phân tích' để thực hiện.")
-    else:
-        geo_overlay_key = geo_key_map[geo_mode]
-        geo_img_bgr = geo_result[geo_overlay_key]
+    tab_global, tab_rectify = st.tabs([
+        "3.2.A: Cấu trúc biên & đường thẳng (Canny + Hough)",
+        "3.2.B: Nắn thẳng phối cảnh biển báo (Homography Rectification)",
+    ])
 
-        # Convert BGR → RGB for display
-        import cv2
-        geo_img_rgb = cv2.cvtColor(geo_img_bgr, cv2.COLOR_BGR2RGB)
-        from PIL import Image as PILImage
-        geo_pil = PILImage.fromarray(geo_img_rgb)
+    with tab_global:
+        if not show_geometry:
+            st.info("Bật tùy chọn 'Phân tích Canny + Hough' ở thanh bên để xem kết quả toàn cảnh.")
+        elif geo_result is None:
+            st.warning("Chưa có kết quả phân tích. Nhấn 'Chạy phân tích' để thực hiện.")
+        else:
+            geo_overlay_key = geo_key_map[geo_mode]
+            geo_img_bgr = geo_result[geo_overlay_key]
 
-        col_orig_geo, col_geo_out = st.columns(2, gap="medium")
-        with col_orig_geo:
-            st.markdown("**Ảnh gốc**")
-            st.image(pil_image, use_column_width=True)
-        with col_geo_out:
-            st.markdown(f"**Kết quả overlay ({geo_mode})**")
-            st.image(geo_pil, use_column_width=True)
+            # Convert BGR -> RGB for display
+            import cv2
+            geo_img_rgb = cv2.cvtColor(geo_img_bgr, cv2.COLOR_BGR2RGB)
+            from PIL import Image as PILImage
+            geo_pil = PILImage.fromarray(geo_img_rgb)
 
-        # Geometry stats
-        stats = geo_result.get("stats", {})
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Số pixel biên", f"{stats.get('num_edge_px', 0):,}")
-        c2.metric("Mật độ biên", f"{stats.get('edge_density_pct', 0):.1f}%")
-        c3.metric("Số đoạn thẳng", str(stats.get("num_lines", 0)))
-        c4.metric("Độ dài TB đoạn thẳng", f"{stats.get('mean_line_length', 0):.1f} px")
+            col_orig_geo, col_geo_out = st.columns(2, gap="medium")
+            with col_orig_geo:
+                st.markdown("**Ảnh gốc**")
+                st.image(pil_image, use_column_width=True)
+            with col_geo_out:
+                st.markdown(f"**Kết quả overlay ({geo_mode})**")
+                st.image(geo_pil, use_column_width=True)
 
-        with st.expander("Thông số thuật toán Canny / Hough"):
-            params_df = pd.DataFrame({
-                "Tham số": ["Canny Low", "Canny High", "Hough Threshold",
-                             "Min Line Length", "Max Line Gap", "Blur Kernel"],
-                "Giá trị": [
-                    stats.get("canny_lo", canny_lo),
-                    stats.get("canny_hi", canny_hi),
-                    stats.get("hough_threshold", hough_thresh),
-                    40, 10, 5,
-                ],
-            })
-            st.dataframe(params_df, use_container_width=True, hide_index=True)
+            # Geometry stats
+            stats = geo_result.get("stats", {})
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Số pixel biên", f"{stats.get('num_edge_px', 0):,}")
+            c2.metric("Mật độ biên", f"{stats.get('edge_density_pct', 0):.1f}%")
+            c3.metric("Số đoạn thẳng", str(stats.get("num_lines", 0)))
+            c4.metric("Độ dài TB đoạn thẳng", f"{stats.get('mean_line_length', 0):.1f} px")
+
+            with st.expander("Thông số thuật toán Canny / Hough"):
+                params_df = pd.DataFrame({
+                    "Tham số": ["Canny Low", "Canny High", "Hough Threshold",
+                                 "Min Line Length", "Max Line Gap", "Blur Kernel"],
+                    "Giá trị": [
+                        stats.get("canny_lo", canny_lo),
+                        stats.get("canny_hi", canny_hi),
+                        stats.get("hough_threshold", hough_thresh),
+                        40, 10, 5,
+                    ],
+                })
+                st.dataframe(params_df, use_container_width=True, hide_index=True)
+
+    with tab_rectify:
+        st.markdown(
+            "Phép biến đổi phối cảnh 2D Homography cho phép ánh xạ các tọa độ biển báo bị méo/nghiêng góc "
+            "về mặt phẳng chuẩn chính diện (frontal view), giúp quan sát và nhận dạng nội dung rõ nét."
+        )
+
+        # Tập hợp tất cả các box phát hiện được
+        all_detected = []
+        for b in frcnn_result.get("boxes", []):
+            all_detected.append(("Faster R-CNN", b))
+        for b in yolo_result.get("boxes", []):
+            all_detected.append(("YOLO26m", b))
+
+        padding_pct = 0.15
+        if not all_detected:
+            st.info(
+                "Chưa có biển báo nào vượt qua ngưỡng tin cậy để tự động nắn thẳng. "
+                "Đang kích hoạt chế độ nắn thẳng thử nghiệm trên vùng trung tâm ảnh."
+            )
+            w_img, h_img = pil_image.size
+            chosen_box = [w_img * 0.25, h_img * 0.25, w_img * 0.75, h_img * 0.75]
+            chosen_label = "Vùng thử nghiệm trung tâm ảnh"
+            chosen_score = 1.0
+        else:
+            col_sel1, col_sel2 = st.columns([3, 1])
+            with col_sel1:
+                selected_idx = st.selectbox(
+                    "Chọn biển báo cần nắn thẳng:",
+                    range(len(all_detected)),
+                    format_func=lambda i: f"[{all_detected[i][0]}] #{i+1}: {all_detected[i][1]['class_name']} (độ tin cậy: {all_detected[i][1]['score']:.2f})",
+                )
+                chosen_source, chosen_box_dict = all_detected[selected_idx]
+                chosen_box = chosen_box_dict["xyxy"]
+                chosen_label = f"{chosen_box_dict['class_name']} ({chosen_source})"
+                chosen_score = chosen_box_dict["score"]
+            with col_sel2:
+                padding_pct = st.slider("Padding ROI (%)", 5, 40, 15, 5, help="Mở rộng biên xung quanh box để không mất viền biển") / 100.0
+
+        try:
+            rect_res = rectify_sign_pil(pil_image, chosen_box, padding=padding_pct)
+
+            col_r1, col_r2, col_r3 = st.columns([1, 1, 1.2], gap="medium")
+            with col_r1:
+                st.markdown("**Vùng ROI gốc (với 4 đỉnh nguồn)**")
+                st.image(rect_res["roi_annotated_pil"], caption=f"Vùng cắt gốc: {chosen_label}", use_column_width=True)
+            with col_r2:
+                st.markdown("**Biển báo sau khi nắn thẳng (Frontal View)**")
+                st.image(rect_res["rectified_pil"], caption="Kích thước chuẩn: 240×240 px", use_column_width=True)
+            with col_r3:
+                st.markdown("**Ma trận Homography $\\mathbf{H}_{3 \\times 3}$**")
+                H_mat = rect_res["homography_matrix"]
+                h_df = pd.DataFrame(
+                    H_mat,
+                    columns=["h1", "h2", "h3"],
+                    index=["h1x", "h2x", "h3x"],
+                )
+                st.dataframe(h_df.style.format("{:.4e}"), use_container_width=True)
+                st.caption(f"Phương pháp trích xuất 4 góc: **{rect_res['method']}**")
+
+                with st.expander("Công thức toán học phép biến đổi"):
+                    st.latex(r"""
+                    \begin{bmatrix} x' \\ y' \\ 1 \end{bmatrix} \sim \mathbf{H} \begin{bmatrix} x \\ y \\ 1 \end{bmatrix}
+                    = \begin{bmatrix}
+                    h_{11} & h_{12} & h_{13} \\
+                    h_{21} & h_{22} & h_{23} \\
+                    h_{31} & h_{32} & h_{33}
+                    \end{bmatrix}
+                    \begin{bmatrix} x \\ y \\ 1 \end{bmatrix}
+                    """)
+                    st.caption("Ma trận Homography được tính toán bằng thuật toán DLT (Direct Linear Transformation) từ 4 cặp điểm tương ứng nguồn - đích.")
+        except Exception as e:
+            st.warning(f"Không thể thực hiện nắn thẳng cho vùng chọn: {e}")
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.divider()
     st.caption(
         "IPCV BTL — Nhóm demo | Faster R-CNN (ResNet-50) & YOLO26m | "
-        "Section 3.2: Canny + HoughLinesP | Section 3.4: Streamlit interactive demo"
+        "Section 3.2: Canny + HoughLinesP & 2D Homography Rectification | Section 3.4: Streamlit interactive demo"
     )
 
 
