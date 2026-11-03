@@ -23,6 +23,7 @@ TRAIN_DEFAULTS = dict(
     warmup_epochs=3.0,
     cos_lr=True,
     close_mosaic=10,
+    freeze=0,
 )
 
 
@@ -47,7 +48,7 @@ def validate_config(cfg: dict) -> dict:
     allowed_train = {
         "epochs", "lr0", "batch_size", "amp", "require_wandb",
         "early_stopping_patience", "run_name", "primary_metric",
-        "optimizer", "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic",
+        "optimizer", "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic", "freeze",
     }
     if set(model) - allowed_model:
         raise ValueError(f"Unknown model keys: {sorted(set(model) - allowed_model)}")
@@ -82,6 +83,11 @@ def validate_config(cfg: dict) -> dict:
         raise ValueError("train.cos_lr must be a boolean")
     _number(train["close_mosaic"], "train.close_mosaic", 0, integer=True)
     _number(c.get("seed"), "seed", 0, 2**32 - 1, integer=True)
+    freeze = train["freeze"]
+    if freeze is not None:
+        indices = freeze if isinstance(freeze, list) else [freeze]
+        for index in indices:
+            _number(index, "train.freeze", 0, integer=True)
     online = c.setdefault("online_preprocess", {})
     if online.get("enabled", False) and online.get("hflip", False):
         raise ValueError("hflip is prohibited for mirror-pair sign classes")

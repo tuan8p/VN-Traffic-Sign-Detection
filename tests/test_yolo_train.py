@@ -211,3 +211,9 @@ def test_fit_writes_failure_json_on_error(pipeline):
     assert "boom" in doc["error"]
     metrics = json.loads((pipeline.run_dir / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["status"] == "failed"
+
+
+@pytest.mark.parametrize('freeze', [0, 10, [0, 2]])
+def test_freeze_is_forwarded_to_ultralytics(pipeline, freeze):
+    pipeline.cfg['train']['freeze'] = freeze
+    assert pipeline._build_train_args()['freeze'] == freeze

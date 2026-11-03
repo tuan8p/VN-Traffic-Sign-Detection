@@ -198,3 +198,9 @@ Working directory (not symlinks), so Ultralytics can save its label cache.
 it bounds collective waits, including dataset setup. A longer timeout does not
 fix mismatched collectives: inspect progress and the first worker error if a run
 still stalls. Restart the session after a CUDA/NCCL watchdog failure before retrying.
+
+YOLO fine-tuning uses `train.freeze` in `configs/pipelines/yolo26m.yaml` or the
+notebook's `NOTEBOOK_PIPELINE["train"]`: `0` for full fine-tuning, an integer N
+for the first N layers, or a list such as `[0, 1, 2]` for specific layer indices.
+Notebook overrides take precedence. The value is passed directly to Ultralytics;
+fixed internal parameters may remain frozen even with `freeze: 0`.

@@ -16,6 +16,7 @@ model:
 
 train:
   epochs: 100
+  freeze: 0  # 0 = full fine-tune; N = freeze first N layers; [0, 1, 2] = specific layers
   # Explicit AdamW: Ultralytics optimizer=auto ignores lr0/momentum and picked
   # AdamW lr~0.000179 internally. lr0 below is the AdamW-scale LR, not SGD 0.01.
   optimizer: AdamW

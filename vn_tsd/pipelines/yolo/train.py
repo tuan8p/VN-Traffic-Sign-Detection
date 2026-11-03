@@ -44,6 +44,7 @@ class YOLOPipeline(BasePipeline):
             "data": str(data_yaml),
             "cache": label_cache,
             "epochs": train_cfg["epochs"],
+            "freeze": train_cfg.get("freeze", 0),
             "batch": train_cfg["batch_size"],
             "imgsz": model_cfg["imgsz"],
             "optimizer": train_cfg.get("optimizer", "AdamW"),
