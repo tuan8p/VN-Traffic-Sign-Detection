@@ -3,3 +3,4 @@ torch>=2.1
 torchvision>=0.16
 ultralytics>=8.4.182
 wandb>=0.19
+pycocotools>=2.0.7,<3

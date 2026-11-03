@@ -1,0 +1,85 @@
+{
+  "protocol_id": "frcnn_final_v1",
+  "frozen_date": "2026-11-02",
+  "source_pin": "a99d2946b55305cea8c6049bd6f581ab709f876a",
+  "reference_bundle": "frcnn_tune_s42_es10_bayes8_sandbox_v1-artifacts-e2d80e82.zip",
+  "reference_sha256": "3c817755f338f50e5300fc5e9b5b2b3604969a2c6bf58a384f714036f46f394f",
+  "seed42_run_id": "ahgf5kge",
+  "seed42_project": "sandbox",
+  "new_runs_project": "BTL",
+  "new_seeds": [
+    7,
+    21,
+    123,
+    2026
+  ],
+  "group": "frcnn_final_v1",
+  "seed42_best_val": {
+    "mAP50-95": 0.4905282939017382,
+    "mAP50": 0.6522681678033324,
+    "mAP75": 0.5923037390208484,
+    "AR100": 0.6521432104227435
+  },
+  "seed42_test": {
+    "mAP50-95": 0.5519156072333286,
+    "mAP50": 0.7404013383935931,
+    "mAP75": 0.6855859694639298,
+    "AR100": 0.6610998364267896
+  },
+  "configuration_rule": "Same winner config for all seeds except seed/run_name/data-root relocation and tracking project sandbox->BTL.",
+  "aggregation": "Five seeds including existing seed42; report mean and sample std ddof=1. Do not select or omit seeds based on scores.",
+  "limits": [
+    "Same existing scene/frame split overlap; not independent-new-scene evaluation",
+    "Test exposed during tuning; not a blind holdout",
+    "Five-seed performance of winner does not prove paired multi-seed superiority vs baseline or standard"
+  ],
+  "dataset_sha256": "f34fb38b178ba7b65c51130c5b906c78d9a8619dc556cf08037d93924dc3f959",
+  "runtime": {
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "packages": {
+      "torch": "2.11.0+cu128",
+      "torchvision": "0.26.0+cu128",
+      "wandb": "0.31.0",
+      "pycocotools": "2.0.11",
+      "numpy": "2.1.3"
+    }
+  },
+  "source_files_sha256": "4e83028dcc6ed9a456341f56583c98c5250a6e7fdbf7f89715f8c067db706171",
+  "reference_checkpoint_sha256": "cac97441e9d2d48d4fe5945cad9363a6e0aecd70da56fb46d0ed40cd621f5623",
+  "dataset_split_hashes": {
+    "train": "fd15fcbf42da08bf274c99b267f1cae512463162a6f0b28ed84d31941c0dbd23",
+    "val": "e5139f467e918e47da0bad10c0068e5bcef193c45ab038bebd0007a475e6d9b3",
+    "test": "3e02b6face375fcbcf441455970e515a4c5350e1638bd76c01ee6d7d62c6d7bb"
+  },
+  "configuration": {
+    "pipeline_yaml": "configs/pipelines/faster_rcnn.yaml",
+    "baseline_yaml": "configs/pipelines/faster_rcnn_baseline.yaml",
+    "shared_yaml": "configs/shared.yaml",
+    "runtime_yaml": "configs/runtime/kaggle.yaml",
+    "pipeline_sha256": "3a520f9054a18eef19b35fd5098b20a6e8e9be5321c2c010598ca1202f78ed31",
+    "baseline_sha256": "22a2adc3d719122ee825867093ad1a8c7b558c3a5f40e22cd57fb731ae863a07",
+    "shared_sha256": "2337836ff7fcd4a68e7890da789876de7bbf6dd46582b62174a28ad623e733be",
+    "runtime_sha256": "308825f3668256041b772b994669c6397d4adbdaae74d233802739caf2a6767f",
+    "winner_resolved_config_in_reference": "frcnn_tune_s42_es10_bayes8_sandbox_v1/trials/ahgf5kge/resolved_config.yaml",
+    "execution": "Final notebook derives config from the hash-pinned reference bundle; current YAML is the portable default recipe, not an additional training input.",
+    "hash_algorithm": "SHA256 canonical JSON of parsed YAML; independent of comments and line endings"
+  },
+  "allowed_seeds": [
+    42,
+    7,
+    21,
+    123,
+    2026
+  ],
+  "seed42_repeat_policy": "Optional repeat under the same protocol. Keep original ahgf5kge for planned five-seed aggregation; do not add repeat as a sixth independent seed or select by score.",
+  "execution_batches": [
+    [
+      7,
+      21
+    ],
+    [
+      123,
+      2026
+    ]
+  ]
+}

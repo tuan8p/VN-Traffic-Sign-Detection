@@ -110,3 +110,39 @@ def test_notebook_cells_parse_and_scaffold_train_launch(tmp_path, monkeypatch):
     assert argv[argv.index("--data-root")+1] == globals_["PROCESSED_ROOT"]
     assert argv[argv.index("--run-name")+1].endswith("deadbeef")
     assert kw["check"] is True
+
+
+def test_notebook03_overrides_resolve_to_frozen_winner(tmp_path, monkeypatch):
+    """Catch stale notebook knobs overriding the tuned YAML at the handoff entrypoint."""
+    import ast
+    import shutil
+
+    from vn_tsd.utils.io import load_yaml
+
+    notebook = json.loads((REPO_ROOT/"notebooks/03_train_faster_rcnn.ipynb").read_text(encoding="utf-8"))
+    sources = ["".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"]
+    shared_cell = next(code for code in sources if code.startswith("# Override nhẹ"))
+    pipeline_cell = next(code for code in sources if code.startswith("# Mirror configs/pipelines"))
+    resolve_cell = next(code for code in sources if "OVERRIDES = _deep_merge" in code)
+    for rel in ("configs/shared.yaml", "configs/pipelines/faster_rcnn.yaml", "configs/runtime/local.yaml"):
+        target = tmp_path/rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT/rel, target)
+    monkeypatch.chdir(tmp_path)
+    namespace = dict(PROCESSED_ROOT=str(tmp_path/"cache"))
+    for code in (shared_cell, pipeline_cell, resolve_cell):
+        ast.parse(code)
+        exec(compile(code, "notebook03-winner-config", "exec"), namespace)
+    cfg = validate_config(namespace["cfg"])
+    expected = resolve_config(
+        REPO_ROOT/"configs/pipelines/faster_rcnn.yaml", REPO_ROOT/"configs/shared.yaml",
+        REPO_ROOT/"configs/runtime/local.yaml",
+        overrides={"data": {"root": namespace["PROCESSED_ROOT"]},
+                   "train": {"run_name": namespace["RUN_NAME"]}},
+    )
+    assert cfg == validate_config(expected)
+    assert load_yaml(namespace["OVERRIDES_PATH"]) == namespace["OVERRIDES"]
+    assert cfg["seed"] == 42 and cfg["project"]["wandb_project"] == "BTL"
+    assert cfg["train"]["batch_size"] == 24 and cfg["eval"]["batch_size"] == 32
+    assert cfg["train"]["epochs"] == 100 and cfg["train"]["early_stopping_patience"] == 10
+    assert cfg["train"]["warmup_epochs"] == 3 and cfg["eval"]["auto_eval_test"] is True

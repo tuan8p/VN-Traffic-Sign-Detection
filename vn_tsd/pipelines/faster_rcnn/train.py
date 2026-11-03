@@ -22,7 +22,7 @@ class FasterRCNNPipeline(BasePipeline):
         except Exception as exc:
             # A controlled failure is reported without marking an unfinished run completed.
             # Hard worker/NCCL failures are handled by torchrun's worker supervision.
-            if ctx.main:
+            if ctx.main and getattr(self, "_started", False):
                 from .artifacts import write_json
                 try:
                     failure = dict(status="failed", pipeline=self.name, error=str(exc))
@@ -74,7 +74,8 @@ class FasterRCNNPipeline(BasePipeline):
         self.cfg, self.run_dir = cfg, Path(path)
         cfg["data"]["root"] = str(Path(cfg["data"]["root"]).expanduser().resolve())
         def prepare_directory():
-            if (self.run_dir/"resolved_config.yaml").exists() or (self.run_dir/"checkpoints/checkpoint_best.pt").exists():
+            if any((self.run_dir/item).exists() for item in
+                   ("resolved_config.yaml", "metrics.json", "checkpoints/checkpoint_best.pt")):
                 raise FileExistsError("Run already has training artifacts; v1 does not resume/overwrite runs")
             for sub in ("logs", "figures", "checkpoints"):
                 (self.run_dir/sub).mkdir(parents=True, exist_ok=True)
@@ -91,6 +92,10 @@ class FasterRCNNPipeline(BasePipeline):
         sets, dataset_id = ctx.phase(lambda: load_cache(cfg))
         if len(set(ctx.gather(content_hash(dataset_id)))) != 1:
             raise ValueError("Dataset content differs between ranks")
+        sweep_trial = None
+        if os.environ.get("WANDB_SWEEP_ID"):
+            from .sweep import verify_trial
+            sweep_trial = ctx.phase(lambda: verify_trial(cfg, dataset_id, self.run_dir))
         if sets["val"].identity["annotations"] == 0:
             raise ValueError("Validation has no GT; cannot select checkpoint")
         source = ctx.main_call(provenance)
@@ -148,6 +153,9 @@ class FasterRCNNPipeline(BasePipeline):
                     dataset_split_hashes={s: d["sha256"] for s, d in dataset_id["splits"].items()}),
                 settings=wandb.Settings(base_url=api_base), mode="online")
             self._wandb_run = run
+            if sweep_trial is not None:
+                from .sweep import verify_run
+                verify_run(run, cfg, sweep_trial)
             ui_url = wandb_run_ui_url(project, run.id)
             write_json({"id": run.id, "url": ui_url, "api_base_url": api_base}, self.run_dir / "wandb_run.json")
             print(f"[faster_rcnn] W&B: {ui_url}", flush=True)
@@ -188,6 +196,12 @@ class FasterRCNNPipeline(BasePipeline):
             row = history_row(
                 epoch, training["loss"], sum(val_components.values()), val_metrics, training["lr"],
                 is_best=improved, patience_count=best.bad,
+            )
+            row.update(
+                train_components=training["components"], val_components=val_components,
+                seconds=time.monotonic()-start,
+                successful_updates=training["successful_updates"],
+                amp_skipped_updates=training["amp_skipped_updates"],
             )
             history.append(row)
             def end_epoch():
@@ -252,6 +266,13 @@ class FasterRCNNPipeline(BasePipeline):
                     run.log(payload, step=len(history)+1)
                 elif fig_payload:
                     run.log(fig_payload, step=len(history)+1)
+                if sweep_trial is not None:
+                    from .sweep import OBJECTIVE
+                    # Only a successfully finalized trial reports the exact checkpoint
+                    # selection score. Never substitute last-val, rounded history or test.
+                    objective = {OBJECTIVE: best_metrics["mAP50-95"], "sweep/best_epoch": best.epoch}
+                    run.summary.update(objective)
+                    run.log(objective, step=len(history)+2)
                 self._wandb_finished = True
                 run.finish()
             return metrics
