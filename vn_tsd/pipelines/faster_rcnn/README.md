@@ -127,13 +127,19 @@ Batch smoke khác batch nhóm được ghi trong resolved/effective config; khô
 
 ## Kaggle full training và eval
 
-Notebook [03](../../../notebooks/03_train_faster_rcnn.ipynb) giữ nguyên toàn bộ scaffold của Tuấn trên main theo yêu cầu người dùng,
-chỉ đổi REPO_BRANCH=faster-rcnn. Notebook dùng knobs/overrides, connectivity-test W&B và train launcher như scaffold;
-không có cell preflight mới hoặc standalone eval bổ sung. Bootstrap fetch rồi checkout -B về remote khi người dùng chạy cell.
-Branch remote phải chứa implementation trước khi dùng bootstrap; không chạy cell này trên local đang có code chưa push.
-Scaffold cài detect/W&B nhưng chưa cài pycocotools: cần chuẩn bị dependency này riêng trước train/eval.
-Knobs batch/patience/seed trong scaffold có thể override YAML; giữ chúng khớp shared config. Connectivity-test tạo W&B run riêng;
-FRCNN fit vẫn chỉ init một training run ở rank 0. Những giới hạn scaffold khác được ghi trong file gửi nhóm, chưa xác nhận notebook chạy Kaggle end-to-end.
+Notebook [03](../../../notebooks/03_train_faster_rcnn.ipynb) giữ cấu trúc scaffold của Tuấn;
+chỉ đồng bộ ba giá trị mặc định sau HPO: LR `0.009606472124890571`, weight decay `1.4756984677083597e-05`
+và dropout `0.4`, cùng ghi chú recipe winner `ahgf5kge`. Không thêm cell hoặc đổi bootstrap/launcher.
+Notebook chạy một run mới, mặc định seed 42, custom 512 / online ON / jitter 0.1 / cap 100 / warmup 3 / ES10 / global 24 / eval 32;
+không phải Sweep hay chạy tiếp checkpoint winner. Chạy lại seed42 không tự thay kết quả gốc trong bảng năm seed.
+`REPO_BRANCH="main"` giữ nguyên scaffold: cần merge PR vào main trước khi bootstrap lấy các thay đổi mới;
+nếu kiểm trước merge thì chọn nhánh `faster-rcnn` đã push. Bootstrap fetch rồi checkout -B về remote;
+không chạy cell này trên local đang có code chưa push.
+Scaffold cài `.[detect]` (đã gồm pycocotools) và W&B, đọc Secret rồi chỉ rank 0 tạo training run;
+không có connectivity-test run riêng. Các biến override có thể ghi đè YAML, cần giữ đúng recipe đã chốt.
+Tracking project lấy từ shared config (BTL); nếu chạy smoke 2 epoch, dùng override tạm sang sandbox,
+không ghi cấu hình smoke vào defaults final hoặc đưa số smoke vào bảng kết quả.
+Đã kiểm local cấu hình resolve và launcher; chưa xác nhận phiên bản notebook03 đồng bộ này chạy Kaggle end-to-end.
 Chưa hỗ trợ chạy lại vào run-dir đã có resolved_config/checkpoint; chọn run mới. V1 **không training resume**.
 
 Global batch train/eval và patience đọc shared config; per-rank batch chia theo WORLD_SIZE thực.
@@ -149,7 +155,8 @@ Local không tự giảm batch nhóm; Kaggle cần preflight thật để biết
 
 W&B bắt buộc trong run thật: host/entity/project đọc shared config, một rank 0 run xuyên train/final test.
 Secrets qua environment/Kaggle Secrets; không tạo connectivity run và không silent offline fallback.
-Snapshot host shared hiện bị SDK 0.31 từ chối: xem file gửi nhóm để Tuấn xác nhận endpoint đúng trước Kaggle.
+Endpoint hiện tại lấy từ shared config: API `https://api.forge.coreweave.com`, UI `https://forge.coreweave.com/wandb`;
+đã dùng trong các run thực nghiệm, phiên Kaggle mới vẫn cần Secret và quyền ghi project.
 
 Sau training, test tự chạy một lần với best. Standalone eval **một process**:
 
@@ -303,7 +310,7 @@ Internet ON/Secret WANDB_API_KEY. `START_TRAIN=True`; Save & Run All train từn
 **BTL**, group `frcnn_final_v1`. Không cần output seed trước; dùng cùng reference cho cả bốn seed.
 Source pin a99d294 đã publish; notebook lấy recipe trực tiếp từ bundle đã pin hash,
 không đọc YAML/JSON mới ở checkout cũ. Không đổi source pin sang commit chứa cấu hình mới trong cùng protocol.
-Notebook 03 của nhóm giữ nguyên; các biến override của notebook đó có thể ghi đè default YAML.
+Notebook 03 giữ scaffold; ba defaults LR/WD/dropout đã đồng bộ winner, các biến override vẫn có thể ghi đè YAML.
 Notebook kiểm source/runtime/cache và đọc JSON/YAML tham chiếu, không load checkpoint winner.
 
 ZIP/checksum xuất ở Output gốc (bỏ qua W&B symlinks); lưu local tại
