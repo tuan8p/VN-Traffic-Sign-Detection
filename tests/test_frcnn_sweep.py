@@ -241,7 +241,7 @@ def test_stop_signal_terminates_trial_and_keeps_interrupted_receipt(tmp_path, mo
 
 def test_notebook_tuning_defaults_are_ready_for_sandbox():
     import ast
-    notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((ROOT/"notebooks/frcnn/01_frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
     assigned = {}
     for cell in notebook["cells"]:
         if cell["cell_type"] != "code":
@@ -269,7 +269,7 @@ def test_notebook_tuning_defaults_are_ready_for_sandbox():
 
 
 def notebook_cell(index):
-    notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((ROOT/"notebooks/frcnn/01_frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
     return ''.join(notebook['cells'][index]['source'])
 
 
@@ -365,7 +365,7 @@ def test_tuning_agent_requests_one_new_trial_before_cap(tmp_path):
 def test_notebook_export_puts_one_bundle_and_checksum_at_output_root(tmp_path, monkeypatch):
     import hashlib
     import zipfile
-    notebook = json.loads((ROOT/"notebooks/frcnn/frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((ROOT/"notebooks/frcnn/01_frcnn_forge_sweeps.ipynb").read_text(encoding="utf-8"))
     campaign = tmp_path/'campaign'
     run = campaign/'trials/r1'
     run.mkdir(parents=True)

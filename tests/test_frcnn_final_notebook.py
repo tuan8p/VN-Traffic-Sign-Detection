@@ -18,7 +18,7 @@ from vn_tsd.utils.io import load_yaml, save_yaml
 from vn_tsd.pipelines.faster_rcnn.artifacts import write_json
 
 ROOT=Path(__file__).resolve().parents[1]
-NOTEBOOK=ROOT/'notebooks/frcnn/frcnn_final_seeds.ipynb'
+NOTEBOOK=ROOT/'notebooks/frcnn/03_frcnn_final_seeds.ipynb'
 
 
 def cell(i):

@@ -23,7 +23,7 @@ from vn_tsd.pipelines.faster_rcnn.dataset import content_hash, file_hash
 from vn_tsd.utils.io import load_yaml, save_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK = ROOT/'notebooks/frcnn/frcnn_ablation.ipynb'
+NOTEBOOK = ROOT/'notebooks/frcnn/02_frcnn_ablation.ipynb'
 PARAMS = {'train.lr': .009606472124890571, 'train.weight_decay': 1.4756984677083597e-05,
           'model.head_dropout': .4, 'online_preprocess.jitter': .1}
 CHOICES = {'lr': ('train','lr',.002), 'weight_decay': ('train','weight_decay',.0005),
