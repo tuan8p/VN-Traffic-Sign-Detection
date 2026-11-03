@@ -26,6 +26,27 @@ def test_scheduler_successful_updates_and_short_smoke():
     assert WarmupCosine(optimizer, cfg, 2).value(2) == pytest.approx(0.005)
 
 
+def test_multi_epoch_warmup_and_budget_shorter_than_warmup():
+    optimizer = type("Optimizer", (), {"param_groups": [{}]})()
+    cfg = dict(epochs=8, warmup_epochs=3, lr=.005, min_lr=1e-6, warmup_start_factor=.01)
+    schedule = WarmupCosine(optimizer, cfg, 4)
+    assert schedule.value(0) == pytest.approx(.00005)
+    assert schedule.value(4) < .005
+    assert schedule.value(12) == pytest.approx(.005)
+    assert schedule.value(20) < .005
+    assert schedule.value(32) == pytest.approx(1e-6)
+    # An AMP skip leaves the successful-update counter and LR unchanged.
+    schedule.updates = 4
+    schedule.apply()
+    assert optimizer.param_groups[0]["lr"] == schedule.value(4)
+    schedule.step()
+    assert optimizer.param_groups[0]["lr"] == schedule.value(5)
+    cfg["epochs"] = 2
+    short = WarmupCosine(optimizer, cfg, 4)
+    assert short.value(4) == pytest.approx(.005*(.01+.99*.5))
+    assert short.value(8) == pytest.approx(.005)
+
+
 def test_best_zero_tie_patience():
     best = BestTracker(10)
     assert best.update(0.0, 1) == (True, False)

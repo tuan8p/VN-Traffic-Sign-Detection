@@ -56,7 +56,8 @@ def test_head_selection_is_explicit(head):
     result = predictor_config(validate_config(cfg))
     assert result["name"] == head
     if head == "custom_mlp":
-        assert result["hidden_dim"] == 512 and result["dropout"] == 0.2
+        # Default YAML now contains the frozen winner; historical 0.2 is in baseline YAML.
+        assert result["hidden_dim"] == 512 and result["dropout"] == 0.4
 
 
 def test_legacy_config_does_not_gain_new_head_fields():

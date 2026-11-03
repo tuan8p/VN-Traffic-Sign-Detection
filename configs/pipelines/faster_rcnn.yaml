@@ -1,3 +1,6 @@
+# Default: winner ahgf5kge, frozen frcnn_final_v1.
+# Pre-Sweep baseline: configs/pipelines/faster_rcnn_baseline.yaml.
+# Protocol record: configs/experiments/faster_rcnn_final_protocol.json.
 # Owner: Team pipeline Faster R-CNN + preprocessing online.
 # Online ops below only run when enabled is true.
 # Do not set train.batch_size or eval.batch_size here. Both come from configs/shared.yaml.
@@ -14,7 +17,7 @@ model:
   # Added RoI projection layers; use standard for the unchanged predictor baseline.
   head: custom_mlp
   head_hidden_dim: 512
-  head_dropout: 0.2
+  head_dropout: 0.4
   weights: FasterRCNN_ResNet50_FPN_Weights.COCO_V1
   trainable_backbone_layers: 5
   frozen_bn_eps: 0.0
@@ -24,9 +27,9 @@ model:
 
 train:
   epochs: 100
-  lr: 0.002
+  lr: 0.009606472124890571
   momentum: 0.9
-  weight_decay: 0.0005
+  weight_decay: 1.4756984677083597e-05
   primary_metric: mAP50-95
   scheduler: cosine
   warmup_epochs: 3

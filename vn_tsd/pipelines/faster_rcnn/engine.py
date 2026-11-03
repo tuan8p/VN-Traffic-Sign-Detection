@@ -26,9 +26,11 @@ class WarmupCosine:
         self.apply()
 
     def value(self, u):
-        t, w = self.cfg["epochs"]*self.steps, self.steps
+        t = self.cfg["epochs"]*self.steps
+        # Short smoke runs may end inside the configured warmup period.
+        w = min(self.cfg.get("warmup_epochs", 1), self.cfg["epochs"])*self.steps
         base, f, minimum = self.cfg["lr"], self.cfg["warmup_start_factor"], self.cfg["min_lr"]
-        if self.cfg["epochs"] == 1:
+        if w == t:
             return base*(f+(1-f)*min(u/w, 1))
         if u < w:
             return base*(f+(1-f)*u/w)
