@@ -24,6 +24,7 @@ def _predictions_coco(
     *,
     batch_size: int = 16,
     device: Any = 0,
+    imgsz: int = 640,
 ) -> list[dict]:
     paths = [str(record["path"]) for record in dataset.records]
     if not paths:
@@ -37,7 +38,7 @@ def _predictions_coco(
         chunk = paths[start : start + step]
         results = model.predict(
             source=chunk,
-            imgsz=640,
+            imgsz=imgsz,
             batch=len(chunk),
             device=device,
             conf=thresholds["score_thresh"],
@@ -94,6 +95,7 @@ def evaluate_split_coco(
         thresholds,
         batch_size=batch_size,
         device=device,
+        imgsz=int(cfg["model"]["imgsz"]),
     )
     metrics = coco_metrics(dataset.coco_ground_truth(), predictions)
     return dict(

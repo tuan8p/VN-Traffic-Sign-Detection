@@ -204,3 +204,44 @@ notebook's `NOTEBOOK_PIPELINE["train"]`: `0` for full fine-tuning, an integer N
 for the first N layers, or a list such as `[0, 1, 2]` for specific layer indices.
 Notebook overrides take precedence. The value is passed directly to Ultralytics;
 fixed internal parameters may remain frozen even with `freeze: 0`.
+
+### YOLO ablation knobs (one experiment at a time)
+
+The pipeline YAML and notebook `NOTEBOOK_PIPELINE` expose the following fields.
+Notebook values override YAML; restore the measured B0 configuration before each
+ablation. The current defaults are not a claim that they are the best measured run.
+
+| Run | Change from B0 |
+| --- | --- |
+| A1 | `online_preprocess.mosaic_prob: 0.5` (enabled and mosaic must be true) |
+| A2 | `train.close_mosaic: 20` |
+| B1 | `train.multi_scale: 0.10` |
+| B2 | `model.imgsz: 960` on the existing 640 cache (B0 uses 640) |
+| C1 | `train.cls_pw: 0.25` |
+| C2 | `train.class_aware_sampling.enabled: true` |
+| C3 | `online_preprocess.mixup: true`, `mixup_prob: 0.05` (enabled must be true) |
+
+`multi_scale` changes training tensor dimensions independently of the online
+augmentation master switch. `cls_pw` uses Ultralytics' native classification
+weights; an installation lacking this argument fails explicitly when C1 is enabled.
+Mosaic/MixUp probabilities are gated by their boolean switches and the online master
+switch; disabled ops remain zero regardless of the configured probability.
+
+C2 uses image-level class-presence counts. An image's weight is the maximum
+`(most_frequent_class_image_count / class_image_count) ** power` among its classes,
+capped by `max_weight`. Defaults are power=0.25, max_weight=2.0; negatives get 1.0.
+A seeded replacement stream is drawn globally and sharded by DDP rank, retaining
+the same epoch length (with normal padding to equal worker lengths). Image repeats
+are intentional. Sampler seed changes with epoch, and val/test are never resampled.
+Secondary images chosen inside Mosaic/MixUp remain native uniform selections.
+
+B2 changes only the model input resolution to 960 on the existing 640x640 cache.
+Ultralytics resizes inputs during training and inference; no Dataset V2 or label
+rewrite is required. COCO ground truth and exported predictions remain in original
+640-image coordinates. Upscaling cannot recover details lost during preprocessing,
+so this tests input resolution on the same dataset, rather than original-pixel
+preservation. YAML and notebook default to 640; select 960 only for B2
+to isolate the resolution change. Higher resolution/multi-scale can require
+more VRAM; keep the shared batch unchanged unless both teams explicitly agree to
+change the protocol. Tune with validation only. Run one-epoch smoke tests before
+long two-GPU experiments.

@@ -20,6 +20,7 @@ class YOLOPipeline(BasePipeline):
         train_cfg = cfg["train"]
         runtime_cfg = cfg.get("runtime_cfg", {})
         online = resolve_online_preprocess(cfg)
+        raw_online = cfg.get("online_preprocess", {})
 
         root = validate_processed_dataset(cfg)
         data_yaml = data_yaml_for_ultralytics(root, self.run_dir / "ultralytics_data")
@@ -39,7 +40,17 @@ class YOLOPipeline(BasePipeline):
             device = 0
         readonly_data = bool(runtime_cfg.get("yolo_readonly_data", False))
         label_cache = False if readonly_data else runtime_cfg.get("yolo_label_cache", True)
+        # Fail explicitly on older installations rather than silently dropping C1.
+        cls_pw = train_cfg.get("cls_pw", 0.0)
+        native_class_weight = {}
+        if cls_pw:
+            from ultralytics.cfg import DEFAULT_CFG_DICT
+            if "cls_pw" not in DEFAULT_CFG_DICT:
+                raise RuntimeError("This Ultralytics version does not support cls_pw; upgrade before C1")
+            native_class_weight["cls_pw"] = cls_pw
         return {
+            **native_class_weight,
+            "multi_scale": train_cfg.get("multi_scale", 0.0),
             "device": device,
             "data": str(data_yaml),
             "cache": label_cache,
@@ -68,8 +79,8 @@ class YOLOPipeline(BasePipeline):
             "fliplr": 0.0,
             "flipud": 0.0,
 
-            "mosaic": 1.0 if online["mosaic"] else 0.0,
-            "mixup": 0.1 if online["mixup"] else 0.0,
+            "mosaic": raw_online.get("mosaic_prob", 1.0) if online["mosaic"] else 0.0,
+            "mixup": raw_online.get("mixup_prob", 0.1) if online["mixup"] else 0.0,
             "hsv_h": 0.015 if online["color_jitter"] else 0.0,
             "hsv_s": 0.7 if online["color_jitter"] else 0.0,
             "hsv_v": 0.4 if online["color_jitter"] else 0.0,
@@ -139,6 +150,7 @@ class YOLOPipeline(BasePipeline):
                 amp=bool(self.cfg["train"].get("amp", True)),
                 online=describe_online_preprocess(self.cfg),
                 metric_source="pycocotools.COCOeval bbox",
+                class_aware_sampling=self.cfg["train"].get("class_aware_sampling", {"enabled": False}),
             )
 
             def prepare():
@@ -157,12 +169,16 @@ class YOLOPipeline(BasePipeline):
             # because Ultralytics SettingsManager uses torch_distributed_zero_first(LOCAL_RANK)
             # on first import when torch.distributed is initialized.
             model = ctx.phase(lambda: build_yolo26m(self.cfg))
+            sampling = self.cfg["train"].get("class_aware_sampling", {"enabled": False})
             handlers = {
                 "on_pretrain_routine_start": [remove_native_wandb],
                 "on_train_epoch_end": [tracking.mark_epoch],
                 "on_fit_epoch_end": [tracking.log_epoch],
                 "on_train_end": [tracking.on_train_end],
             }
+            if sampling["enabled"]:
+                from .sampling import set_sampling_epoch
+                handlers["on_train_epoch_start"] = [set_sampling_epoch]
             for event, functions in (callbacks or {}).items():
                 handlers.setdefault(event, []).extend(functions)
             for event, functions in handlers.items():
@@ -174,8 +190,9 @@ class YOLOPipeline(BasePipeline):
                     "(dataset scan / DDP / W&B may take several minutes before epoch 1/)…",
                     flush=True,
                 )
-            if ctx.world > 1:
+            if ctx.world > 1 or sampling["enabled"]:
                 from .trainer import LauncherDetectionTrainer
+                LauncherDetectionTrainer.sampling_config = sampling
                 LauncherDetectionTrainer.eval_batch_size = int(self.cfg["eval"]["batch_size"])
                 model.train(trainer=LauncherDetectionTrainer, **train_args)
             else:
