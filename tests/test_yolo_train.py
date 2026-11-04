@@ -191,26 +191,58 @@ def test_ddp_rejects_uneven_global_batch(pipeline, monkeypatch):
         pipeline._build_train_args()
 
 
-def test_fit_writes_failure_json_on_error(pipeline):
+@pytest.mark.parametrize('error', [RuntimeError('boom'), KeyboardInterrupt(), SystemExit(3)])
+def test_fit_writes_failure_json_on_error_before_cleanup(pipeline, capsys, error):
     model = Mock()
-    model.train.side_effect = RuntimeError("boom")
+    model.train.side_effect = error
     tracking = Mock()
     tracking.run = None
-    tracking.finish = Mock()
+
+    def check_failure_before_cleanup(success):
+        assert success is False
+        doc = json.loads((pipeline.run_dir / 'logs/failure_rank0.json').read_text())
+        assert doc['error_type'] == type(error).__name__
+        assert doc['rank'] == 0
+        assert type(error).__name__ in doc['traceback']
+        assert type(error).__name__ in capsys.readouterr().err
+
+    tracking.finish.side_effect = check_failure_before_cleanup
 
     with (
         patch("vn_tsd.pipelines.yolo.model.build_yolo26m", return_value=model),
         patch("vn_tsd.pipelines.yolo.tracking.Tracking", return_value=tracking),
-        pytest.raises(RuntimeError, match="boom"),
+        pytest.raises(type(error)) as raised,
     ):
         pipeline.fit()
 
     doc = json.loads((pipeline.run_dir / "failure.json").read_text(encoding="utf-8"))
     assert doc["status"] == "failed"
     assert doc["pipeline"] == "yolo26m"
-    assert "boom" in doc["error"]
+    assert raised.value is error
+    assert doc['error'] == str(error)
     metrics = json.loads((pipeline.run_dir / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["status"] == "failed"
+
+
+def test_ddp_worker_persists_its_failure(pipeline, monkeypatch, capsys):
+    ctx = Mock(main=False, world=2, rank=1)
+    ctx.phase.side_effect = lambda fn: fn()
+    monkeypatch.setenv('WORLD_SIZE', '2')
+    monkeypatch.setenv('RANK', '1')
+    model = Mock()
+    model.train.side_effect = RuntimeError('worker failed')
+    with (
+        patch('vn_tsd.pipelines.yolo.distributed.Context', return_value=ctx),
+        patch('vn_tsd.pipelines.yolo.model.build_yolo26m', return_value=model),
+        pytest.raises(RuntimeError, match='worker failed'),
+    ):
+        pipeline.fit()
+    doc = json.loads((pipeline.run_dir / 'logs/failure_rank1.json').read_text())
+    assert doc['rank'] == 1
+    assert 'worker failed' in doc['traceback']
+    assert 'rank 1' in capsys.readouterr().err
+    assert not (pipeline.run_dir / 'failure.json').exists()
+    ctx.close.assert_called_once()
 
 
 @pytest.mark.parametrize('freeze', [0, 10, [0, 2]])

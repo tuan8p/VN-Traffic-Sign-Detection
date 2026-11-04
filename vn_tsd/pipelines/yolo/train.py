@@ -4,6 +4,8 @@ from typing import Any, Callable
 import os
 from pathlib import Path
 import shutil
+import sys
+import traceback
 
 from vn_tsd.data.dataset_contract import data_yaml_for_ultralytics, validate_processed_dataset
 from vn_tsd.data.preprocess_online import describe_online_preprocess, resolve_online_preprocess
@@ -280,14 +282,29 @@ class YOLOPipeline(BasePipeline):
             metrics = ctx.phase(finish_run)
             success = True
             return metrics
-        except Exception as exc:
+        except BaseException as exc:
+            # Report before W&B/process-group cleanup, which can itself block.
+            # Also preserve KeyboardInterrupt/SystemExit diagnostics, then re-raise.
+            trace = traceback.format_exc()
+            print(
+                f"[yolo26m][rank {ctx.rank}] Training failed; run_dir={self.run_dir.resolve()}",
+                file=sys.stderr, flush=True,
+            )
+            print(trace, file=sys.stderr, flush=True)
+            failure = dict(
+                status="failed", pipeline=self.name, error=str(exc),
+                error_type=type(exc).__name__, rank=ctx.rank, traceback=trace,
+            )
+            try:
+                save_json(failure, self.run_dir / "logs" / f"failure_rank{ctx.rank}.json")
+            except OSError as write_error:
+                print(f"Could not save rank failure log: {write_error}", file=sys.stderr, flush=True)
             if ctx.main:
-                failure = dict(status="failed", pipeline=self.name, error=str(exc))
                 try:
                     save_json(failure, self.run_dir / "failure.json")
                     save_json(failure, self.run_dir / "metrics.json")
-                except OSError:
-                    pass
+                except OSError as write_error:
+                    print(f"Could not save failure summary: {write_error}", file=sys.stderr, flush=True)
             raise
         finally:
             try:

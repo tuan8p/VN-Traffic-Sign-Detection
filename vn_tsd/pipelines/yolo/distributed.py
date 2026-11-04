@@ -46,10 +46,9 @@ class Context:
     def close(self):
         if self.world <= 1 or not dist.is_initialized():
             return
-        try:
-            dist.barrier()
-        except Exception:
-            pass
+        # Successful phases already synchronize. On failure, a peer may still be
+        # inside a different training collective, so a new barrier can hide the
+        # original exception until the distributed timeout expires.
         if self.owns_group:
             try:
                 dist.destroy_process_group()

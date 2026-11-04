@@ -72,6 +72,7 @@ class Tracking:
         if not self.main or epoch not in self.pending:
             return
         self.pending.remove(epoch)
+        print(f"[yolo26m] Epoch {epoch}: COCO validation starting", flush=True)
         if self._val_dataset is None and isinstance(self.cfg.get("data", {}).get("root"), str) and self.cfg["data"]["root"].strip():
             try:
                 from vn_tsd.pipelines.faster_rcnn.dataset import load_cache
@@ -83,6 +84,7 @@ class Tracking:
             val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val", dataset=self._val_dataset)["metrics"]
         else:
             val_metrics = evaluate_split_coco(self.cfg, Path(trainer.last), "val")["metrics"]
+        print(f"[yolo26m] Epoch {epoch}: COCO validation completed; recording results", flush=True)
         train_loss = _train_loss(trainer)
         val_loss = _val_loss(trainer)
         lr = _learning_rate(trainer)
