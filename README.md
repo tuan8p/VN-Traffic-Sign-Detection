@@ -191,6 +191,11 @@ wandb_run.json. Both pipelines select best and report test AP with shared
 checks do not establish that CUDA/NCCL or server authentication works: validate
 one epoch on Kaggle and verify one run, two GPU workers and one best checkpoint.
 
+YOLO COCO export skips zero-area prediction boxes with a count and example warning;
+Ultralytics can collapse boxes when clipping them to the image boundaries. Small
+positive-area predictions remain included. Non-finite values, invalid class IDs or
+confidence values, and reversed coordinates fail with the image path and values.
+
 Dataset startup can exceed five minutes on cold Kaggle Input storage while the
 other rank waits in a barrier. Notebook 04 copies images and labels to a fresh
 Working directory (not symlinks), so Ultralytics can save its label cache.
