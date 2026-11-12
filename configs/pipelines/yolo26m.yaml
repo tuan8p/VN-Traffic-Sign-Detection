@@ -1,4 +1,5 @@
 # Owner: Team pipeline YOLO26m + preprocessing online.
+# Defaults from best run: yolo26m_s42_ep100_bs24_online_877e2300.
 # Online ops below only run when enabled is true.
 # Do not set train.batch_size or eval.batch_size here. Both come from configs/shared.yaml.
 # Team YOLO: pass the shared train and eval totals from configs/shared.yaml to Ultralytics. Do not divide them.
@@ -28,7 +29,7 @@ train:
   cos_lr: true
   close_mosaic: 10  # A2: 20
   multi_scale: 0.0  # B1: 0.10 (independent of online_preprocess.enabled)
-  cls_pw: 0.0  # C1: 0.25; fails explicitly if Ultralytics lacks support
+  cls_pw: 0.25  # Best-run class weighting; requires native Ultralytics support
   class_aware_sampling:  # C2: enable only this option for the sampling ablation
     enabled: false
     power: 0.25
