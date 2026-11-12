@@ -42,3 +42,18 @@ def test_yolo_config_sets_coco_threshold_defaults():
     assert validated["train"]["lr0"] == 0.0002
     assert validated["train"]["momentum"] == 0.9
     assert validated["online_preprocess"]["enabled"] is True
+
+
+@pytest.mark.parametrize('freeze', [0, 10, [0, 2], [], None])
+def test_freeze_config_is_preserved(freeze):
+    cfg = resolved()
+    cfg['train']['freeze'] = freeze
+    assert validate_config(cfg)['train']['freeze'] == freeze
+
+
+@pytest.mark.parametrize('freeze', [True, -1, 1.5, '10', [0, -1], [False]])
+def test_invalid_freeze_rejected(freeze):
+    cfg = resolved()
+    cfg['train']['freeze'] = freeze
+    with pytest.raises(ValueError, match='train.freeze'):
+        validate_config(cfg)

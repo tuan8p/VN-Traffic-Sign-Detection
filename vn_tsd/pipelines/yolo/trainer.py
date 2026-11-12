@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - allows unit testing without ultralytic
 
 class LauncherDetectionTrainer(DetectionTrainer):
     eval_batch_size: int | None = None
+    sampling_config: dict | None = None
 
     def _setup_ddp(self, world_size=None):
         if not dist.is_initialized():
@@ -35,5 +36,13 @@ class LauncherDetectionTrainer(DetectionTrainer):
             custom = getattr(self, "eval_batch_size", None) or getattr(self.args, "eval_batch_size", None)
             if custom is not None:
                 batch_size = int(custom)
-        return super().get_dataloader(dataset_path, batch_size, rank, mode)
+        loader = super().get_dataloader(dataset_path, batch_size, rank, mode)
+        policy = getattr(self, "sampling_config", None)
+        if mode == "train" and policy and policy.get("enabled", False):
+            from .sampling import class_aware_loader
+            loader = class_aware_loader(loader, policy, num_classes=self.data["nc"],
+                                        rank=int(os.environ.get("RANK", "0")),
+                                        world_size=int(os.environ.get("WORLD_SIZE", "1")),
+                                        seed=self.args.seed)
+        return loader
 

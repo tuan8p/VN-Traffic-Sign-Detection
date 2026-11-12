@@ -99,6 +99,7 @@ def test_group_is_kept_alive_until_context_close(monkeypatch):
     # No handoff/destroy occurs before training.
     dist.destroy_process_group.assert_not_called()
     ctx.close()
+    dist.barrier.assert_not_called()
     assert not state['initialized']
     assert dist.destroy_process_group.call_count == 1
 

@@ -23,6 +23,10 @@ TRAIN_DEFAULTS = dict(
     warmup_epochs=3.0,
     cos_lr=True,
     close_mosaic=10,
+    freeze=0,
+    multi_scale=0.0,
+    cls_pw=0.0,
+    class_aware_sampling=dict(enabled=False, power=0.25, max_weight=2.0),
 )
 
 
@@ -47,7 +51,7 @@ def validate_config(cfg: dict) -> dict:
     allowed_train = {
         "epochs", "lr0", "batch_size", "amp", "require_wandb",
         "early_stopping_patience", "run_name", "primary_metric",
-        "optimizer", "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic",
+        "optimizer", "momentum", "weight_decay", "lrf", "warmup_epochs", "cos_lr", "close_mosaic", "freeze", "multi_scale", "cls_pw", "class_aware_sampling",
     }
     if set(model) - allowed_model:
         raise ValueError(f"Unknown model keys: {sorted(set(model) - allowed_model)}")
@@ -55,8 +59,8 @@ def validate_config(cfg: dict) -> dict:
         raise ValueError(f"Unknown train keys: {sorted(set(train) - allowed_train)}")
     if model.get("family") != "yolo" or model["weights"] != WEIGHTS:
         raise ValueError("v1 supports YOLO26m publisher weights only")
-    if model["imgsz"] != 640:
-        raise ValueError("Processed cache and YOLO imgsz must be 640")
+    if type(model["imgsz"]) is not int or model["imgsz"] not in (640, 960):
+        raise ValueError("YOLO imgsz must be 640 or 960")
     if c.get("data", {}).get("num_classes") != 52:
         raise ValueError("Dataset must have 52 classes")
     for key in ("score_thresh", "nms_thresh"):
@@ -82,9 +86,27 @@ def validate_config(cfg: dict) -> dict:
         raise ValueError("train.cos_lr must be a boolean")
     _number(train["close_mosaic"], "train.close_mosaic", 0, integer=True)
     _number(c.get("seed"), "seed", 0, 2**32 - 1, integer=True)
+    freeze = train["freeze"]
+    if freeze is not None:
+        indices = freeze if isinstance(freeze, list) else [freeze]
+        for index in indices:
+            _number(index, "train.freeze", 0, integer=True)
+    _number(train["multi_scale"], "train.multi_scale", 0, 1)
+    _number(train["cls_pw"], "train.cls_pw", 0, 1)
+    sampling = train["class_aware_sampling"]
+    if not isinstance(sampling, dict) or set(sampling) - {"enabled", "power", "max_weight"}:
+        raise ValueError("Invalid train.class_aware_sampling fields")
+    for key, value in TRAIN_DEFAULTS["class_aware_sampling"].items():
+        sampling.setdefault(key, value)
+    if not isinstance(sampling["enabled"], bool):
+        raise ValueError("class_aware_sampling.enabled must be boolean")
+    _number(sampling["power"], "class_aware_sampling.power", 0, 1)
+    _number(sampling["max_weight"], "class_aware_sampling.max_weight", 1)
     online = c.setdefault("online_preprocess", {})
     if online.get("enabled", False) and online.get("hflip", False):
         raise ValueError("hflip is prohibited for mirror-pair sign classes")
+    for key, default in (("mosaic_prob", 1.0), ("mixup_prob", 0.1)):
+        _number(online.get(key, default), f"online_preprocess.{key}", 0, 1)
     runtime = c.setdefault("runtime_cfg", {})
     if runtime.get("device", "cuda") not in ("cuda", "cpu"):
         raise ValueError("runtime_cfg.device must be cuda or cpu")

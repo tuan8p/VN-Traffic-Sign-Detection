@@ -1,12 +1,16 @@
 """Test/val evaluation with the same COCOeval path as Faster R-CNN."""
 from __future__ import annotations
 
+import logging
+import math
 from pathlib import Path
 from typing import Any
 
 from vn_tsd.eval.coco_eval import coco_metrics, detection_thresholds, evaluator_metadata
 from vn_tsd.eval.metrics import summarize_yolo
 from vn_tsd.pipelines.faster_rcnn.dataset import load_cache
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _device_arg(cfg: dict[str, Any]):
@@ -24,11 +28,14 @@ def _predictions_coco(
     *,
     batch_size: int = 16,
     device: Any = 0,
+    imgsz: int = 640,
 ) -> list[dict]:
     paths = [str(record["path"]) for record in dataset.records]
     if not paths:
         return []
     predictions: list[dict] = []
+    empty_boxes = 0
+    first_empty = None
     # Chunk paths to avoid Ultralytics LoadPilAndNumpy pre-loading all split images at once
     # and to guarantee each chunk runs as a true batch of size <= batch_size.
     step = max(1, int(batch_size))
@@ -37,7 +44,7 @@ def _predictions_coco(
         chunk = paths[start : start + step]
         results = model.predict(
             source=chunk,
-            imgsz=640,
+            imgsz=imgsz,
             batch=len(chunk),
             device=device,
             conf=thresholds["score_thresh"],
@@ -58,9 +65,24 @@ def _predictions_coco(
             labels = result.boxes.cls.cpu().tolist()
             for box, score, label in zip(boxes, scores, labels):
                 x1, y1, x2, y2 = box
+                detail = f"image_id={image_id}, file={record['path']}, bbox={box}, score={score}, class_id={label}"
+                if not all(math.isfinite(value) for value in (*box, score, label)):
+                    raise ValueError(f"Non-finite YOLO prediction for COCO export: {detail}")
+                if not float(label).is_integer() or not 0 <= label < 52:
+                    raise ValueError(f"Invalid YOLO class ID for COCO export: {detail}")
+                if not 0.0 <= score <= 1.0:
+                    raise ValueError(f"Invalid YOLO confidence for COCO export: {detail}")
+                if x2 < x1 or y2 < y1:
+                    raise ValueError(f"Reversed YOLO bounding box for COCO export: {detail}")
+                # Ultralytics clips predictions to the original image boundaries.
+                # An outside box can collapse to zero area; it is not a detection
+                # to export, and must not abort training after validation.
+                if x2 == x1 or y2 == y1:
+                    empty_boxes += 1
+                    if first_empty is None:
+                        first_empty = detail
+                    continue
                 cls = int(label)
-                if not 0 <= cls < 52 or not 0.0 <= float(score) <= 1.0 or x2 <= x1 or y2 <= y1:
-                    raise ValueError("Invalid YOLO prediction for COCO export")
                 predictions.append(
                     dict(
                         image_id=image_id,
@@ -69,6 +91,11 @@ def _predictions_coco(
                         score=float(score),
                     )
                 )
+    if empty_boxes:
+        LOGGER.warning(
+            "COCO export skipped %d zero-area YOLO boxes; first: %s",
+            empty_boxes, first_empty,
+        )
     return predictions
 
 
@@ -94,6 +121,7 @@ def evaluate_split_coco(
         thresholds,
         batch_size=batch_size,
         device=device,
+        imgsz=int(cfg["model"]["imgsz"]),
     )
     metrics = coco_metrics(dataset.coco_ground_truth(), predictions)
     return dict(
