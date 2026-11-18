@@ -47,12 +47,11 @@ def _avg_conf(boxes: list[dict]) -> float:
 
 def _metrics_table(result: dict) -> list[tuple[str, str]]:
     boxes = result.get("boxes", [])
+    mode_text = "Checkpoint thực" if result.get("mode") == "real" else ("Giả lập (Mock)" if result.get("mode") == "mock" else "Lỗi")
     rows = [
-        ("Pipeline", result.get("pipeline", "—")),
-        ("Chế độ", result.get("mode", "—")),
+        ("Chế độ", mode_text),
         ("Thời gian suy luận", f"{result.get('inference_ms', 0):.1f} ms"),
         ("Số lượng box", str(len(boxes))),
-        ("Độ tin cậy TB", f"{_avg_conf(boxes):.3f}"),
         ("Top-3 nhãn dự đoán", _top_classes(boxes)),
     ]
     if result.get("mode") == "error":
@@ -246,43 +245,27 @@ def main() -> None:
 
         # Faster R-CNN auto discovery
         frcnn_candidates = _find_checkpoints("faster_rcnn")
-        frcnn_ckpt: Path | None = None
-        if not frcnn_candidates:
+        frcnn_ckpt: Path | None = frcnn_candidates[0] if frcnn_candidates else None
+        if frcnn_ckpt is None:
             st.caption("**Faster R-CNN**: Chưa có checkpoint trong `outputs/faster_rcnn/` (chạy Mock)")
-        elif len(frcnn_candidates) == 1:
-            frcnn_ckpt = frcnn_candidates[0]
+        else:
             try:
                 rel = frcnn_ckpt.relative_to(_REPO_ROOT)
             except ValueError:
                 rel = frcnn_ckpt.name
             st.caption(f"**Faster R-CNN**: Đã nhận `{rel}`")
-        else:
-            frcnn_ckpt = st.selectbox(
-                "Faster R-CNN Checkpoint",
-                frcnn_candidates,
-                format_func=lambda p: str(p.relative_to(_REPO_ROOT)) if p.is_relative_to(_REPO_ROOT) else p.name,
-                help="Tìm thấy nhiều checkpoint trong outputs/faster_rcnn/",
-            )
 
         # YOLO26m auto discovery
         yolo_candidates = _find_checkpoints("yolo26m")
-        yolo_ckpt: Path | None = None
-        if not yolo_candidates:
+        yolo_ckpt: Path | None = yolo_candidates[0] if yolo_candidates else None
+        if yolo_ckpt is None:
             st.caption("**YOLO26m**: Chưa có checkpoint trong `outputs/yolo26m/` (chạy Mock)")
-        elif len(yolo_candidates) == 1:
-            yolo_ckpt = yolo_candidates[0]
+        else:
             try:
                 rel = yolo_ckpt.relative_to(_REPO_ROOT)
             except ValueError:
                 rel = yolo_ckpt.name
             st.caption(f"**YOLO26m**: Đã nhận `{rel}`")
-        else:
-            yolo_ckpt = st.selectbox(
-                "YOLO26m Checkpoint",
-                yolo_candidates,
-                format_func=lambda p: str(p.relative_to(_REPO_ROOT)) if p.is_relative_to(_REPO_ROOT) else p.name,
-                help="Tìm thấy nhiều checkpoint trong outputs/yolo26m/",
-            )
 
         st.divider()
         st.subheader("Tham số mô hình")
@@ -463,30 +446,7 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-    # ── Comparison summary table ───────────────────────────────────────────────
-    st.divider()
-    st.subheader("Bảng so sánh tổng hợp")
 
-    fboxes = frcnn_result.get("boxes", [])
-    yboxes = yolo_result.get("boxes", [])
-
-    import pandas as pd
-    summary = pd.DataFrame({
-        "": ["Số box phát hiện", "Độ tin cậy trung bình", "Thời gian suy luận (ms)", "Nhãn xuất hiện nhiều nhất"],
-        "Faster R-CNN": [
-            len(fboxes),
-            f"{_avg_conf(fboxes):.3f}",
-            f"{frcnn_result.get('inference_ms', 0):.1f}",
-            _top_classes(fboxes, n=1),
-        ],
-        "YOLO26m": [
-            len(yboxes),
-            f"{_avg_conf(yboxes):.3f}",
-            f"{yolo_result.get('inference_ms', 0):.1f}",
-            _top_classes(yboxes, n=1),
-        ],
-    })
-    st.dataframe(summary, use_container_width=True, hide_index=True)
 
     # ── Section 3.2 — Geometry ─────────────────────────────────────────────────
     st.divider()
