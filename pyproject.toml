@@ -9,7 +9,7 @@ description = "Vietnamese traffic-sign detection — Faster R-CNN ResNet-50 and 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "IPCV team" }]
+authors = [{ name = "IPCV" }]
 dependencies = [
   "numpy>=1.24",
   "pandas>=2.0",
@@ -34,9 +34,6 @@ vn-tsd-eval = "tools.run_eval:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["vn_tsd*", "tools*", "analysis*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]

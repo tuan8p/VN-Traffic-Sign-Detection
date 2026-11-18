@@ -582,7 +582,7 @@ def main() -> None:
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.divider()
     st.caption(
-        "IPCV BTL — Nhóm demo | Faster R-CNN (ResNet-50) & YOLO26m | "
+        "IPCV BTL | Faster R-CNN (ResNet-50) & YOLO26m | "
         "Section 3.2: Canny + HoughLinesP & 2D Homography Rectification | Section 3.4: Streamlit interactive demo"
     )
 

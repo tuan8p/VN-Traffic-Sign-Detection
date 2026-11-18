@@ -1,8 +1,5 @@
 """Optional online preprocessing toggles for detection pipelines.
 
-Owner: dùng chung. Hàm resolve đã xong, file này không còn việc mở.
-Team pipeline YOLO26m + preprocessing online và Team pipeline Faster R-CNN + preprocessing online đọc flag ở đây rồi áp trong train loop của pipeline mình.
-
 Offline preprocessing (resize policy, class map, split files) is shared and
 cached. Online ops run per-batch while tuning a pipeline and default OFF.
 Each pipeline yaml may override `online_preprocess`. The master switch

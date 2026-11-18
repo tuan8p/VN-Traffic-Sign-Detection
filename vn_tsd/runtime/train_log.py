@@ -2,7 +2,7 @@
 
 Same progress bar and epoch line as the classification DL pipeline,
 with detection metrics instead of accuracy and macro F1.
-Both teams call this. Do not print a different epoch format.
+Both pipelines call this. Do not print a different epoch format.
 
 Cả hai pipeline gọi history_row/log_epoch sau validation mỗi epoch (rank 0).
 history.json: epoch, train_loss, val_loss, lr, is_best, patience_count, bốn metric.

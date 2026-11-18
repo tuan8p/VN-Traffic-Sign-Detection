@@ -1,10 +1,7 @@
 # Analysis
 
-Owner: Team analysis + preprocessing offline
-
-Làm hai lần:
+Mô-đun phân tích và khám phá dữ liệu (Exploratory Data Analysis - EDA):
 
 - Trước preprocessing offline, trên ảnh gốc: phân bố lớp theo box, width/height, heatmap tâm, số ảnh mỗi split, box quá nhỏ.
-- Sau preprocessing offline, trên cache đã letterbox và augmentation: cùng bộ hình, để kiểm bản dùng chung.
-
-TODO [Team analysis + preprocessing offline]: điền analysis/eda.py. Hình ghi vào analysis/figures/.
+- Sau preprocessing offline, trên cache đã letterbox và augmentation: cùng bộ hình, để kiểm tra tính cân bằng và chất lượng dữ liệu.
+- Các biểu đồ trực quan hóa được xuất tự động vào `analysis/figures/`.

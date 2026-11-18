@@ -1,7 +1,7 @@
-"""Shared train entry. Not owned by one team.
+"""Shared train entry.
 
-Team pipeline YOLO26m + preprocessing online fills YOLOPipeline.fit. Team pipeline Faster R-CNN + preprocessing online fills FasterRCNNPipeline.fit.
-This file only resolves config and the --online / --no-online switch.
+Resolves configuration, orchestrates training for Faster R-CNN and YOLO26m,
+and handles the --online / --no-online switch.
 """
 from __future__ import annotations
 import argparse

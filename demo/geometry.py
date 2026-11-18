@@ -1,7 +1,5 @@
 """Geometric and scene-structure analysis for the demo.
 
-Owner: Team demo + phân tích hình học và cấu trúc cảnh
-
 Nguồn: mục 3.2, CV-project-tonghop.pdf. Hướng đã chọn:
   1. Phát hiện biên (Canny) + đường thẳng (HoughLinesP)
   2. Ước lượng phép biến đổi phối cảnh 2D Homography để nắn thẳng (rectify) biển báo

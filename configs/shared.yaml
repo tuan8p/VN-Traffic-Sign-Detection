@@ -54,7 +54,7 @@ train:
   batch_size: 24
   amp: true
   require_wandb: true
-  # Same for both pipelines, like batch_size. Tell the other team before changing.
+  # Same for both pipelines, like batch_size.
   early_stopping_patience: 10
 
 eval:

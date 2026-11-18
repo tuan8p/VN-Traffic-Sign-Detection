@@ -1,7 +1,4 @@
-"""YOLO26m via Ultralytics.
-
-TODO [Team pipeline YOLO26m + preprocessing online]: ultralytics.YOLO('yolo26m.pt') and point data yaml at the offline export.
-"""
+"""YOLO26m via Ultralytics."""
 from __future__ import annotations
 import os
 from typing import Any

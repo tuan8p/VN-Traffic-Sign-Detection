@@ -1,7 +1,6 @@
 # Default: winner ahgf5kge, frozen frcnn_final_v1.
 # Pre-Sweep baseline: configs/pipelines/faster_rcnn_baseline.yaml.
 # Protocol record: configs/experiments/faster_rcnn_final_protocol.json.
-# Owner: Team pipeline Faster R-CNN + preprocessing online.
 # Online ops below only run when enabled is true.
 # Do not set train.batch_size or eval.batch_size here. Both come from configs/shared.yaml.
 pipeline: faster_rcnn
@@ -11,7 +10,7 @@ model:
   family: faster_rcnn
   backbone: resnet50
   pretrained: true
-  # Team Faster R-CNN: 52 is the dataset. Box predictor must be 53 (plus background).
+  # 52 classes in dataset. Box predictor has 53 (plus background).
   # DataLoader must use per_rank_batch so the shared total is not applied on every GPU.
   num_classes: 52
   # Added RoI projection layers; use standard for the unchanged predictor baseline.

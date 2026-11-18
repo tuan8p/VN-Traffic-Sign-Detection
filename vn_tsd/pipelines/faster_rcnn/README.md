@@ -1,6 +1,5 @@
 # Faster R-CNN
 
-**Kết quả và bàn giao cuối (03/11/2026):** xem [báo cáo thực nghiệm](EXPERIMENT_REPORT.md).
 Báo cáo gồm mốc main `64bef54`, preflight, hai pilot, tám trial tuning, năm ablation,
 baseline/năm seed/mean ± std và thông tin `run.zip` winner seed 42. Chuỗi thực nghiệm đã hoàn tất;
 các mục bên dưới mô tả implementation và cách vận hành, không thay thế báo cáo kết quả.
@@ -23,7 +22,7 @@ Mọi learnable parameter train ngay từ epoch 1; FrozenBatchNorm giữ thống
 
 ### Custom head và baseline chuẩn
 
-Theo góp ý thêm layers của Tuấn, YAML hiện chọn `model.head: custom_mlp`. Giữ nguyên pretrained backbone/FPN/RPN và
+YAML hiện chọn `model.head: custom_mlp`. Giữ nguyên pretrained backbone/FPN/RPN và
 hai FC layers của `roi_heads.box_head`; thay riêng predictor sau feature vector 1024 bằng:
 
 ```text
@@ -84,7 +83,6 @@ cache owner phải xác minh policy offline trước run thật.
 
 Dataset identity lưu sorted relative paths + SHA256 bytes ảnh/nhãn, metadata/class hashes và số lượng. Chặn ảnh byte-identical giữa split;
 không chứng minh độc lập với ảnh re-encode/near-duplicate/augmentation cùng lineage. Cần cache final/version/provenance của Bình.
-Các vấn đề ngoài ownership được ghi tại [file gửi nhóm](../../../docs/FRCNN_TEAM_HANDOFF.md).
 
 ## Local — Pixi và kiểm thử offline
 
@@ -123,12 +121,11 @@ pixi run -e frcnn --locked python -m tools.run_train --pipeline faster_rcnn --ru
 ```
 
 CLI smoke này vẫn forward/train ở 640 và có thể chậm/nặng trên laptop. Không chạy mặc định trong setup hoặc coi nó là full-run result.
-Batch smoke khác batch nhóm được ghi trong resolved/effective config; không đưa số smoke vào bảng so sánh.
+Batch smoke khác batch chuẩn được ghi trong resolved/effective config; không đưa số smoke vào bảng so sánh.
 
 ## Kaggle full training và eval
 
-Notebook [03](../../../notebooks/03_train_faster_rcnn.ipynb) giữ cấu trúc scaffold của Tuấn;
-chỉ đồng bộ ba giá trị mặc định sau HPO: LR `0.009606472124890571`, weight decay `1.4756984677083597e-05`
+Cấu trúc huấn luyện đồng bộ ba giá trị mặc định sau HPO: LR `0.009606472124890571`, weight decay `1.4756984677083597e-05`
 và dropout `0.4`, cùng ghi chú recipe winner `ahgf5kge`. Không thêm cell hoặc đổi bootstrap/launcher.
 Notebook chạy một run mới, mặc định seed 42, custom 512 / online ON / jitter 0.1 / cap 100 / warmup 3 / ES10 / global 24 / eval 32;
 không phải Sweep hay chạy tiếp checkpoint winner. Chạy lại seed42 không tự thay kết quả gốc trong bảng năm seed.
@@ -151,7 +148,7 @@ Scheduler SGD: warmup theo train.warmup_epochs từ factor cấu hình rồi cos
 Nếu ngân sách smoke ngắn hơn hoặc bằng warmup, toàn run chỉ warmup (giới hạn warmup bằng số epoch của run).
 AMP skipped steps không tăng scheduler; epoch không update nào là lỗi. History LR là LR thực dùng ở update cuối,
 không phải next-state. Sau đủ nominal successful updates scheduler next-state đạt min_lr.
-Local không tự giảm batch nhóm; Kaggle cần preflight thật để biết batch chung có vừa VRAM.
+Local không tự giảm batch cấu hình; Kaggle cần preflight thật để biết batch chung có vừa VRAM.
 
 W&B bắt buộc trong run thật: host/entity/project đọc shared config, một rank 0 run xuyên train/final test.
 Secrets qua environment/Kaggle Secrets; không tạo connectivity run và không silent offline fallback.
@@ -189,11 +186,10 @@ Mỗi run chứa:
 - run.zip sau final test và W&B finish. Standalone eval có thể thêm sidecars sau zip; repack tường minh nếu cần.
 
 Artifacts không tự là kết quả tốt; phân tích localization/class confusion/small objects/negative false positives sau run thật.
-Không bịa good/bad examples hoặc metric khi chưa có run. Tuấn tích hợp geometry/demo/báo cáo và lời giải thích input/output.
-
+Không bịa good/bad examples hoặc metric khi chưa có run. 
 ## Forge Sweeps
 
-Notebook riêng: [01_frcnn_forge_sweeps.ipynb](../../../notebooks/frcnn/01_frcnn_forge_sweeps.ipynb); notebook 03 chung không đổi.
+Notebook riêng: Forge Sweeps; notebook 03 chung không đổi.
 Notebook hiện bàn giao sẵn tuning Bayesian tối đa 8 trial: source 7746b79, seed 42,
 cap 100/warmup 3/ES10, batch 24/eval 32, project override `sandbox`, test policy `shared`.
 Mỗi phiên agent count 1, mỗi trial dùng cả 2 GPU. register/agent đều bật: RunAll/Save&RunAll thực sự chạy GPU.
@@ -224,10 +220,10 @@ python -m vn_tsd.pipelines.faster_rcnn.sweep register --campaign /kaggle/working
 python -m vn_tsd.pipelines.faster_rcnn.sweep agent --campaign /kaggle/working/frcnn_sweeps/NAME --count 1
 ```
 
-`--test-policy shared` giữ auto-test theo config nhóm. `skip` là lựa chọn tường minh cho campaign
+`--test-policy shared` giữ auto-test theo config chung. `skip` là lựa chọn tường minh cho campaign
 không chạy test, cần thống nhất nhóm; không thay shared YAML. Notebook mặc định giữ `shared`.
 Preflight/pilot dùng grid một bộ tham số baseline; tuning dùng search YAML. Epoch override chỉ nằm
-trong campaign, không sửa defaults nhóm. Hai epoch preflight với warmup 3 là warmup-only, không phải benchmark.
+trong campaign, không sửa defaults chung. Hai epoch preflight với warmup 3 là warmup-only, không phải benchmark.
 
 CLI agent cấp `WANDB_RUN_ID`, `WANDB_SWEEP_ID` và `${args_json_file}` cho launcher.
 Launcher không gọi `wandb.init`; nó ghi một config chung rồi chạy torchrun. Pipeline rank 0 tạo đúng
@@ -255,7 +251,7 @@ Local tests dùng W&B giả và CPU/Gloo, không xác nhận Forge private proje
 
 ## Ablation sau Sweep seed 42
 
-Notebook [02_frcnn_ablation.ipynb](../../../notebooks/frcnn/02_frcnn_ablation.ipynb) chạy **một đối chứng mỗi phiên**.
+Notebook Ablation chạy **một đối chứng mỗi phiên**.
 Năm lựa chọn `ABLATION`: `lr`, `weight_decay`, `dropout`, `jitter`, `standard`;
 mỗi bản Kaggle chọn một mục và có output riêng.
 Mỗi phiên dùng T4 × 2, tạo run Forge độc lập trong sandbox, group `frcnn_ablation_s42_v1`;
@@ -301,7 +297,7 @@ WD 0.000014756984677083597/jitter 0.1, cap 100/warmup 3/ES10/global 24/eval 32.
 Dùng lại seed 42 hiện có trong sandbox để tổng hợp năm seed. Có thể chạy lại 42 để kiểm lặp;
 run lặp được đánh dấu, không tự thay run gốc hay cộng thành seed thứ sáu.
 
-Import [03_frcnn_final_seeds.ipynb](../../../notebooks/frcnn/03_frcnn_final_seeds.ipynb). Nhận một seed `SEED=21` hoặc danh sách có thứ tự
+Import Final Seeds. Nhận một seed `SEED=21` hoặc danh sách có thứ tự
 `SEED=[21,7]`, từ một đến năm seed khác nhau trong `[42,7,21,123,2026]`.
 Không dùng set `{21,7}` vì không giữ thứ tự. Hai phiên song song có thể đặt
 `SEED=[7,21]` và `SEED=[123,2026]`; mỗi phiên chạy nối tiếp, mỗi run dùng hai T4.
@@ -336,7 +332,7 @@ with torch.inference_mode():
 names = metadata['dataset']['names']
 ```
 
-Tuấn letterbox ảnh/video raw và inverse boxes về raw coordinates trước vẽ. Không coi processed coords là raw coords.
+Letterbox ảnh/video raw và inverse boxes về raw coordinates trước vẽ. Không coi processed coords là raw coords.
 Checkpoint lưu state_dict/primitive metadata, strict offline reconstruction FrozenBN eps 0, không pickle whole model.
 
 ## Nguồn
@@ -344,4 +340,4 @@ Checkpoint lưu state_dict/primitive metadata, strict offline reconstruction Fro
 - [TorchVision Faster R-CNN](https://docs.pytorch.org/vision/0.26/models/generated/torchvision.models.detection.fasterrcnn_resnet50_fpn.html), installed source `faster_rcnn.py`, `rpn.py`, `roi_heads.py`, `backbone_utils.py`, `ops/misc.py` cho implementation/loss/FrozenBN.
 - [Faster R-CNN](https://arxiv.org/abs/1506.01497), [FPN](https://arxiv.org/abs/1612.03144), [Mask R-CNN/RoIAlign](https://arxiv.org/abs/1703.06870).
 - [COCO API evaluator](https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py), [PyTorch DDP](https://docs.pytorch.org/docs/2.11/generated/torch.nn.parallel.DistributedDataParallel.html).
-- README/config/checklist của nhóm; PDF yêu cầu môn trong docs/sources. Không thêm mô hình/thuật toán chưa dùng vào giải thích phương pháp thực tế.
+- README và cấu hình dự án. Không thêm mô hình/thuật toán chưa dùng vào giải thích phương pháp thực tế.

@@ -1,7 +1,5 @@
 # Demo — VN Traffic Sign Detection
 
-**Owner:** Team demo + phân tích hình học và cấu trúc cảnh
-
 ## Cài đặt
 
 ```bash

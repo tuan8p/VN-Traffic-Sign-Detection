@@ -1,4 +1,4 @@
-"""Strict reader of the team's processed YOLO cache. Never rewrites the cache."""
+"""Strict reader of processed YOLO cache. Never rewrites the cache."""
 from __future__ import annotations
 
 import csv
