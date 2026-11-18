@@ -359,7 +359,7 @@ def main() -> None:
     # Show original image
     with st.expander("Ảnh gốc", expanded=True):
         w_orig, h_orig = pil_image.size
-        st.image(pil_image, caption=f"Kích thước gốc: {w_orig}×{h_orig} px", use_column_width=False, width=min(w_orig, 640))
+        st.image(pil_image, caption=f"Kích thước gốc: {w_orig}×{h_orig} px", width=min(w_orig, 640))
 
     st.divider()
 
@@ -432,7 +432,7 @@ def main() -> None:
         st.caption(badge)
 
         frcnn_annotated = draw_boxes(pil_image, frcnn_result)
-        st.image(frcnn_annotated, caption="Kết quả Faster R-CNN", use_column_width=True)
+        st.image(frcnn_annotated, caption="Kết quả Faster R-CNN", width="stretch")
 
         st.markdown("**Chỉ số chi tiết**")
         for label, value in _metrics_table(frcnn_result):
@@ -451,7 +451,7 @@ def main() -> None:
         st.caption(badge)
 
         yolo_annotated = draw_boxes(pil_image, yolo_result)
-        st.image(yolo_annotated, caption="Kết quả YOLO26m", use_column_width=True)
+        st.image(yolo_annotated, caption="Kết quả YOLO26m", width="stretch")
 
         st.markdown("**Chỉ số chi tiết**")
         for label, value in _metrics_table(yolo_result):
@@ -519,10 +519,10 @@ def main() -> None:
             col_orig_geo, col_geo_out = st.columns(2, gap="medium")
             with col_orig_geo:
                 st.markdown("**Ảnh gốc**")
-                st.image(pil_image, use_column_width=True)
+                st.image(pil_image, width="stretch")
             with col_geo_out:
                 st.markdown(f"**Kết quả overlay ({geo_mode})**")
-                st.image(geo_pil, use_column_width=True)
+                st.image(geo_pil, width="stretch")
 
             # Geometry stats
             stats = geo_result.get("stats", {})
@@ -589,10 +589,10 @@ def main() -> None:
             col_r1, col_r2, col_r3 = st.columns([1, 1, 1.2], gap="medium")
             with col_r1:
                 st.markdown("**Vùng ROI gốc (với 4 đỉnh nguồn)**")
-                st.image(rect_res["roi_annotated_pil"], caption=f"Vùng cắt gốc: {chosen_label}", use_column_width=True)
+                st.image(rect_res["roi_annotated_pil"], caption=f"Vùng cắt gốc: {chosen_label}", width="stretch")
             with col_r2:
                 st.markdown("**Biển báo sau khi nắn thẳng (Frontal View)**")
-                st.image(rect_res["rectified_pil"], caption="Kích thước chuẩn: 240×240 px", use_column_width=True)
+                st.image(rect_res["rectified_pil"], caption="Kích thước chuẩn: 240×240 px", width="stretch")
             with col_r3:
                 st.markdown("**Ma trận Homography $\\mathbf{H}_{3 \\times 3}$**")
                 H_mat = rect_res["homography_matrix"]

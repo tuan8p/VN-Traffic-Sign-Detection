@@ -193,8 +193,25 @@ def _infer_faster_rcnn(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# YOLO26m inference
+# YOLO26m inference (with in-memory model cache)
 # ─────────────────────────────────────────────────────────────────────────────
+
+_YOLO_MODEL_CACHE: dict[str, Any] = {}
+
+
+def _get_yolo_model(checkpoint: str | Path):
+    ckpt_str = str(checkpoint)
+    if ckpt_str not in _YOLO_MODEL_CACHE:
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise ImportError(
+                "Chưa cài đặt thư viện 'ultralytics'. Vui lòng chạy lệnh: "
+                "pip install ultralytics"
+            ) from exc
+        _YOLO_MODEL_CACHE[ckpt_str] = YOLO(ckpt_str)
+    return _YOLO_MODEL_CACHE[ckpt_str]
+
 
 def _infer_yolo(
     pil_image,
@@ -202,13 +219,12 @@ def _infer_yolo(
     device: str = "cpu",
     score_threshold: float = _DEMO_SCORE_THRESHOLD,
 ) -> dict[str, Any]:
-    from ultralytics import YOLO
     import torch
 
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
 
-    model = YOLO(str(checkpoint))
+    model = _get_yolo_model(checkpoint)
     w_orig, h_orig = pil_image.size
 
     t0 = time.perf_counter()
